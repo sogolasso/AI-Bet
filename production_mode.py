@@ -13,6 +13,7 @@ import logging
 import json
 from datetime import datetime, timedelta
 from pathlib import Path
+from dotenv import load_dotenv
 
 # Configure logging
 logging.basicConfig(
@@ -62,13 +63,9 @@ class ProductionMode:
         # Make sure the data/collectors directory exists
         Path("data/collectors").mkdir(parents=True, exist_ok=True)
         
-        # Force reload environment variables
-        try:
-            from dotenv import load_dotenv
-            load_dotenv(override=True)
-            logger.info("Environment variables reloaded from .env file")
-        except Exception as e:
-            logger.error(f"Error loading .env file: {e}")
+        # Load environment variables
+        if not self.load_env_variables():
+            return
         
         # Initialize Telegram bot
         from bot.new_telegram_bot import BettingAdvisorBot
@@ -99,24 +96,12 @@ class ProductionMode:
             logger.info(f"Found token in environment: {telegram_token[:5]}...")
         
         # Parse admin IDs from environment
-        admin_ids_str = os.environ.get('TELEGRAM_ADMIN_IDS', '')
-        admin_ids = []
-        try:
-            # Remove brackets if present
-            admin_ids_str = admin_ids_str.strip('[]')
-            
-            # Split by comma and strip whitespace
-            admin_id_strings = [id.strip() for id in admin_ids_str.split(',')]
-            
-            # Convert to integers
-            admin_ids = [int(id) for id in admin_id_strings if id.strip().isdigit()]
-            
-            # Update the global constant in the bot module
-            sys.modules['bot.new_telegram_bot'].ADMIN_USER_IDS = admin_ids
-            
-            logger.info(f"Admin IDs set: {admin_ids}")
-        except Exception as e:
-            logger.error(f"Error parsing admin IDs: {e}")
+        admin_ids = self.get_admin_ids()
+        
+        # Update the global constant in the bot module
+        sys.modules['bot.new_telegram_bot'].ADMIN_USER_IDS = admin_ids
+        
+        logger.info(f"Admin IDs set: {admin_ids}")
         
         # Create a bot instance that works with both async and non-async methods
         self.telegram_bot = BettingAdvisorBot(token=telegram_token)
@@ -151,6 +136,45 @@ class ProductionMode:
         
         # Send initialization message
         await self._send_telegram_update("<b>🚀 AI Football Betting Advisor</b>\n\nProduction mode initialized and ready to provide betting tips.")
+    
+    def load_env_variables(self):
+        """Load environment variables from .env file."""
+        logger.info("Loading environment variables from .env file...")
+        
+        try:
+            env_path = '.env'
+            if os.path.exists(env_path):
+                load_dotenv(env_path)
+                logger.info("Environment variables loaded from .env file")
+                return True
+            else:
+                logger.error(".env file not found")
+                return False
+        except Exception as e:
+            logger.error(f"Error loading environment variables: {e}")
+            return False
+
+    def get_admin_ids(self):
+        """Get admin Telegram user IDs from environment variable."""
+        admin_ids_str = os.environ.get('TELEGRAM_ADMIN_IDS', '')
+        
+        if not admin_ids_str:
+            logger.warning("No admin IDs found in environment variables")
+            return []
+        
+        try:
+            # Try comma-separated format first
+            if ',' in admin_ids_str:
+                admin_ids = [int(user_id.strip()) for user_id in admin_ids_str.split(',') if user_id.strip()]
+            else:
+                # Try single ID
+                admin_ids = [int(admin_ids_str)]
+            
+            logger.info(f"Parsed admin IDs: {admin_ids}")
+            return admin_ids
+        except ValueError as e:
+            logger.error(f"Error parsing admin IDs: {e}")
+            return []
     
     async def _send_telegram_update(self, message):
         """Send a Telegram update to admin users."""
