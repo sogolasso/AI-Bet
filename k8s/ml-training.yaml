@@ -1,0 +1,171 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ml-training
+  namespace: betting-advisor
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ml-training
+  template:
+    metadata:
+      labels:
+        app: ml-training
+    spec:
+      containers:
+      - name: ml-training
+        image: ${DOCKER_REGISTRY}/betting-advisor-ml:latest
+        imagePullPolicy: Always
+        resources:
+          requests:
+            memory: "4Gi"
+            cpu: "2"
+          limits:
+            memory: "8Gi"
+            cpu: "4"
+        env:
+        - name: MODEL_VERSION
+          valueFrom:
+            configMapKeyRef:
+              name: ml-config
+              key: model_version
+        - name: TRAINING_DATA_PATH
+          value: "/data/training"
+        - name: MODEL_SAVE_PATH
+          value: "/data/models"
+        - name: VALIDATION_THRESHOLD
+          valueFrom:
+            configMapKeyRef:
+              name: ml-config
+              key: validation_threshold
+        - name: SHADOW_TESTING_ENABLED
+          value: "true"
+        volumeMounts:
+        - name: training-data
+          mountPath: /data/training
+        - name: model-storage
+          mountPath: /data/models
+        - name: ml-config
+          mountPath: /config
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 8080
+          initialDelaySeconds: 5
+          periodSeconds: 5
+      volumes:
+      - name: training-data
+        persistentVolumeClaim:
+          claimName: training-data-pvc
+      - name: model-storage
+        persistentVolumeClaim:
+          claimName: model-storage-pvc
+      - name: ml-config
+        configMap:
+          name: ml-config
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ml-config
+  namespace: betting-advisor
+data:
+  model_version: "1.0.0"
+  validation_threshold: "0.75"
+  feature_engineering_config: |
+    {
+      "window_sizes": [5, 10, 20],
+      "features": [
+        "form",
+        "goals_scored",
+        "goals_conceded",
+        "odds_movement",
+        "market_volatility"
+      ]
+    }
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: ml-retraining
+  namespace: betting-advisor
+spec:
+  schedule: "0 0 * * *"  # Run daily at midnight
+  concurrencyPolicy: Forbid
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          containers:
+          - name: ml-retraining
+            image: ${DOCKER_REGISTRY}/betting-advisor-ml:latest
+            args: ["--mode", "retrain"]
+            env:
+            - name: TRAINING_DATA_PATH
+              value: "/data/training"
+            - name: MODEL_SAVE_PATH
+              value: "/data/models"
+            - name: VALIDATION_THRESHOLD
+              valueFrom:
+                configMapKeyRef:
+                  name: ml-config
+                  key: validation_threshold
+            volumeMounts:
+            - name: training-data
+              mountPath: /data/training
+            - name: model-storage
+              mountPath: /data/models
+          volumes:
+          - name: training-data
+            persistentVolumeClaim:
+              claimName: training-data-pvc
+          - name: model-storage
+            persistentVolumeClaim:
+              claimName: model-storage-pvc
+          restartPolicy: OnFailure
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: ml-training
+  namespace: betting-advisor
+spec:
+  selector:
+    matchLabels:
+      app: ml-training
+  endpoints:
+  - port: metrics
+    interval: 15s
+    path: /metrics
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: ml-training
+  namespace: betting-advisor
+  annotations:
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+spec:
+  tls:
+  - hosts:
+    - ml-training.betting-advisor.com
+    secretName: ml-training-tls
+  rules:
+  - host: ml-training.betting-advisor.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: ml-training
+            port:
+              number: 8080 

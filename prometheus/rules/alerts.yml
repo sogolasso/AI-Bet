@@ -1,0 +1,156 @@
+groups:
+  - name: betting_advisor_alerts
+    rules:
+      # System Health Alerts
+      - alert: HighErrorRate
+        expr: rate(http_requests_total{status=~"5.."}[5m]) / rate(http_requests_total[5m]) > 0.1
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: High error rate detected
+          description: "Error rate is above 10% for the last 5 minutes"
+          telegram: "{{ template 'telegram.message' . }}"
+
+      - alert: HighLatency
+        expr: histogram_quantile(0.95, rate(http_request_duration_seconds_bucket[5m])) > 1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: High latency detected
+          description: "95th percentile of request latency is above 1 second"
+          telegram: "{{ template 'telegram.message' . }}"
+
+      # Database & Redis Alerts
+      - alert: DatabaseLatencySpike
+        expr: rate(pg_stat_activity_max_tx_duration{datname="betting_advisor"}[5m]) > 300
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: Database transaction latency spike
+          description: "Long-running transactions detected (>5 minutes)"
+          telegram: "{{ template 'telegram.message' . }}"
+
+      - alert: RedisLatencySpike
+        expr: rate(redis_commands_duration_seconds_sum[5m]) / rate(redis_commands_duration_seconds_count[5m]) > 0.5
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: Redis command latency spike
+          description: "Redis command latency is above 500ms"
+          telegram: "{{ template 'telegram.message' . }}"
+
+      # Betting Performance Alerts
+      - alert: SuddenROIDrop
+        expr: rate(betting_roi[1h]) < -0.1
+        for: 1h
+        labels:
+          severity: critical
+        annotations:
+          summary: Sudden ROI drop detected
+          description: "ROI has dropped by more than 10% in the last hour"
+          telegram: "{{ template 'telegram.message' . }}"
+
+      - alert: LowBettingAccuracy
+        expr: betting_prediction_accuracy < 0.4
+        for: 1h
+        labels:
+          severity: warning
+        annotations:
+          summary: Low betting accuracy
+          description: "Betting prediction accuracy is below 40% for the last hour"
+          telegram: "{{ template 'telegram.message' . }}"
+
+      - alert: HighROIVariance
+        expr: stddev(betting_roi[24h]) > 0.5
+        for: 1h
+        labels:
+          severity: warning
+        annotations:
+          summary: High ROI variance
+          description: "ROI standard deviation is above 50% for the last 24 hours"
+          telegram: "{{ template 'telegram.message' . }}"
+
+      # Telegram Bot Performance
+      - alert: TelegramBotLatency
+        expr: rate(telegram_bot_command_duration_seconds_sum[5m]) / rate(telegram_bot_command_duration_seconds_count[5m]) > 2
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: Telegram bot response time issues
+          description: "Telegram bot command response time is above 2 seconds"
+          telegram: "{{ template 'telegram.message' . }}"
+
+      - alert: TelegramBotErrorRate
+        expr: rate(telegram_bot_errors_total[5m]) / rate(telegram_bot_commands_total[5m]) > 0.1
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: High Telegram bot error rate
+          description: "Telegram bot error rate is above 10%"
+          telegram: "{{ template 'telegram.message' . }}"
+
+      # ML Model Performance
+      - alert: MLModelDrift
+        expr: abs(betting_prediction_accuracy - betting_prediction_accuracy_historical) > 0.2
+        for: 1h
+        labels:
+          severity: warning
+        annotations:
+          summary: ML model performance drift
+          description: "ML model accuracy has drifted by more than 20% from historical average"
+          telegram: "{{ template 'telegram.message' . }}"
+
+      - alert: OddsAnomaly
+        expr: abs(betting_odds_value - betting_odds_value_historical) > 0.3
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: Odds value anomaly detected
+          description: "Significant deviation in odds value from historical average"
+          telegram: "{{ template 'telegram.message' . }}"
+
+      # Resource Usage
+      - alert: HighMemoryUsage
+        expr: process_resident_memory_bytes / process_virtual_memory_bytes > 0.8
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: High memory usage
+          description: "Memory usage is above 80%"
+          telegram: "{{ template 'telegram.message' . }}"
+
+      - alert: HighCPUUsage
+        expr: rate(process_cpu_seconds_total[5m]) > 0.8
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: High CPU usage
+          description: "CPU usage is above 80%"
+          telegram: "{{ template 'telegram.message' . }}"
+
+      - alert: DatabaseConnectionIssues
+        expr: up{job="betting_advisor"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: Database connection issues
+          description: "Cannot connect to the database"
+
+      - alert: RedisConnectionIssues
+        expr: redis_up == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: Redis connection issues
+          description: "Cannot connect to Redis" 

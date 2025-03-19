@@ -1,0 +1,44 @@
+services:
+  - type: web
+    name: football-betting-advisor
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: python run_production.py
+    envVars:
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_ADMIN_IDS
+        sync: false
+      - key: INITIAL_BANKROLL
+        value: 100
+    plan: free
+
+  # Daily Tips Cron Job (Runs at 12:00 UTC)
+  - type: cron
+    name: daily-tips
+    env: python
+    buildCommand: pip install -r requirements.txt
+    schedule: "0 12 * * *"
+    startCommand: python run_daily_production.py --mode tips
+    envVars:
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_ADMIN_IDS
+        sync: false
+      - key: INITIAL_BANKROLL
+        value: 100
+
+  # Daily Results Cron Job (Runs at 22:00 UTC)
+  - type: cron
+    name: daily-results
+    env: python
+    buildCommand: pip install -r requirements.txt
+    schedule: "0 22 * * *"
+    startCommand: python run_daily_production.py --mode results
+    envVars:
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_ADMIN_IDS
+        sync: false
+      - key: INITIAL_BANKROLL
+        value: 100 

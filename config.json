@@ -1,0 +1,13 @@
+{
+    "initial_bankroll": 1000.0,
+    "max_daily_bets": 5,
+    "min_confidence": "Medium",
+    "min_value_threshold": 0.05,
+    "max_bet_per_match": 1,
+    "max_stake_per_bet_percent": 5.0,
+    "staking_strategy": "kelly",
+    "kelly_fraction": 0.25,
+    "days_ahead": 3,
+    "data_dir": "data",
+    "throttle_seconds": 5
+} 

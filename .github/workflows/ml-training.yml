@@ -1,0 +1,118 @@
+name: ML Model Training and Deployment
+
+on:
+  schedule:
+    - cron: '0 0 * * *'  # Run daily at midnight
+  workflow_dispatch:
+    inputs:
+      force_retrain:
+        description: 'Force model retraining'
+        required: false
+        default: 'false'
+        type: boolean
+
+jobs:
+  train-and-validate:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+        
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install -r tests/requirements-test.txt
+        
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v1
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ secrets.AWS_REGION }}
+        
+    - name: Train model
+      run: |
+        python scripts/train_model.py \
+          --data-path /tmp/training_data \
+          --model-path /tmp/models \
+          --validation-threshold 0.75 \
+          --force-retrain ${{ inputs.force_retrain }}
+      env:
+        TRAINING_DATA_PATH: /tmp/training_data
+        MODEL_SAVE_PATH: /tmp/models
+        
+    - name: Run validation tests
+      run: |
+        pytest tests/test_ml_model.py -v
+        
+    - name: Upload model artifacts
+      uses: actions/upload-artifact@v3
+      with:
+        name: ml-model
+        path: /tmp/models/
+        
+  deploy-canary:
+    needs: train-and-validate
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v1
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ secrets.AWS_REGION }}
+        
+    - name: Deploy canary model
+      run: |
+        # Deploy to canary environment
+        kubectl apply -f k8s/ml-training-canary.yaml
+        
+        # Wait for deployment to be ready
+        kubectl rollout status deployment/ml-training-canary -n betting-advisor
+        
+        # Run smoke tests
+        python scripts/run_smoke_tests.py --environment canary
+        
+    - name: Monitor canary performance
+      run: |
+        # Monitor metrics for 1 hour
+        python scripts/monitor_canary.py --duration 3600
+        
+    - name: Promote or rollback
+      run: |
+        if [ "$(python scripts/check_canary_performance.py)" = "success" ]; then
+          # Promote canary to production
+          kubectl apply -f k8s/ml-training.yaml
+          kubectl rollout status deployment/ml-training -n betting-advisor
+        else
+          # Rollback canary deployment
+          kubectl rollout undo deployment/ml-training-canary -n betting-advisor
+          echo "Canary deployment failed, rolling back"
+        fi
+        
+  notify:
+    needs: [train-and-validate, deploy-canary]
+    runs-on: ubuntu-latest
+    if: always()
+    
+    steps:
+    - name: Send Telegram notification
+      uses: appleboy/telegram-action@master
+      with:
+        to: ${{ secrets.TELEGRAM_CHAT_ID }}
+        token: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+        message: |
+          ML Model Training and Deployment Status:
+          - Training: ${{ needs.train-and-validate.result }}
+          - Canary Deployment: ${{ needs.deploy-canary.result }}
+          - Commit: ${{ github.sha }}
+          - Branch: ${{ github.ref }} 
