@@ -392,15 +392,58 @@ class BettingAdvisor:
     async def _generate_mock_tips(self) -> List[Dict[str, Any]]:
         """Generate mock tips for demo purposes."""
         import random
+        from datetime import datetime, timedelta
+        
+        # Get today's date and tomorrow's date
+        today = datetime.now()
+        tomorrow = today + timedelta(days=1)
+        
+        today_str = today.strftime("%Y-%m-%d")
+        tomorrow_str = tomorrow.strftime("%Y-%m-%d")
+        
+        # Log the dates we're using
+        logger.info(f"Generating tips for today ({today_str}) and tomorrow ({tomorrow_str})")
         
         # Generate 5 tips with varying markets and confidence levels
         tips = []
+        
+        # Updated match data with proper dates and times
         matches = [
-            {"home": "Liverpool", "away": "Manchester City", "league": "Premier League", "time": "Today 19:45"},
-            {"home": "Barcelona", "away": "Real Madrid", "league": "La Liga", "time": "Tomorrow 20:00"},
-            {"home": "Bayern Munich", "away": "Borussia Dortmund", "league": "Bundesliga", "time": "Tomorrow 15:30"},
-            {"home": "PSG", "away": "Marseille", "league": "Ligue 1", "time": "Today 20:00"},
-            {"home": "Inter", "away": "Juventus", "league": "Serie A", "time": "Tomorrow 20:45"}
+            {
+                "home": "Liverpool", 
+                "away": "Manchester City", 
+                "league": "Premier League", 
+                "date": today_str,
+                "time": f"{today_str} {19 if today.hour < 19 else (today.hour + 1)}:45"
+            },
+            {
+                "home": "Barcelona", 
+                "away": "Real Madrid", 
+                "league": "La Liga", 
+                "date": tomorrow_str,
+                "time": f"{tomorrow_str} 20:00"
+            },
+            {
+                "home": "Bayern Munich", 
+                "away": "Borussia Dortmund", 
+                "league": "Bundesliga", 
+                "date": tomorrow_str,
+                "time": f"{tomorrow_str} 15:30"
+            },
+            {
+                "home": "PSG", 
+                "away": "Marseille", 
+                "league": "Ligue 1", 
+                "date": today_str,
+                "time": f"{today_str} {20 if today.hour < 20 else (today.hour + 1)}:00"
+            },
+            {
+                "home": "Inter", 
+                "away": "Juventus", 
+                "league": "Serie A", 
+                "date": tomorrow_str,
+                "time": f"{tomorrow_str} 20:45"
+            }
         ]
         
         markets = [
@@ -421,6 +464,7 @@ class BettingAdvisor:
             tip = {
                 "match": f"{match['home']} vs {match['away']}",
                 "league": match["league"],
+                "match_date": match["date"],
                 "match_time": match["time"],
                 "tip": f"{market['name']} - {random.choice(market['selections']).upper()}",
                 "odds": round(random.uniform(1.5, 3.5), 2),
@@ -428,6 +472,10 @@ class BettingAdvisor:
                 "confidence": random.choices(confidence_levels, weights=[0.3, 0.5, 0.2])[0],
                 "stake": random.randint(1, 5) * 2
             }
+            
+            # Log the tip being added
+            logger.info(f"Generated tip: {tip['match']} on {tip['match_date']} - {tip['tip']}")
+            
             tips.append(tip)
         
         return tips

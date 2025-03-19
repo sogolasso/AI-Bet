@@ -20,6 +20,9 @@ def format_daily_tips(tips: List[Dict[str, Any]]) -> str:
     if not tips:
         return "🚫 No betting tips available for today."
     
+    # Get today's date
+    today = datetime.now().strftime('%Y-%m-%d')
+    
     # Header
     formatted_msg = "🔮 *TODAY'S BETTING TIPS* 🔮\n\n"
     
@@ -27,14 +30,39 @@ def format_daily_tips(tips: List[Dict[str, Any]]) -> str:
     formatted_msg += f"📅 {datetime.now().strftime('%A, %d %B %Y')}\n"
     formatted_msg += f"⚽ {len(tips)} value bets identified\n\n"
     
+    # Filter tips for today only
+    today_tips = [tip for tip in tips if tip.get("match_date", today) == today]
+    
+    # If no today tips, add message
+    if not today_tips:
+        formatted_msg += "⚠️ *Note:* No matches found for today's date. Showing upcoming matches.\n\n"
+    
+    # Use filtered tips if available, otherwise use all
+    display_tips = today_tips if today_tips else tips
+    
     # Tips
-    for i, tip in enumerate(tips, 1):
+    for i, tip in enumerate(display_tips, 1):
+        match_date = tip.get("match_date", today)
         match_time = ""
         try:
-            dt = datetime.fromisoformat(tip.get("match_time", ""))
-            match_time = dt.strftime("%H:%M")
+            # Try to parse ISO format first
+            if "T" in tip.get("match_time", ""):
+                dt = datetime.fromisoformat(tip.get("match_time", ""))
+                match_time = dt.strftime("%H:%M")
+            else:
+                # Try to parse from the format we set in betting_advisor.py
+                # Expected format: "YYYY-MM-DD HH:MM"
+                dt_str = tip.get("match_time", "")
+                if " " in dt_str:
+                    date_part, time_part = dt_str.split(" ", 1)
+                    match_time = time_part
+                else:
+                    match_time = ""
         except (ValueError, TypeError):
             pass
+        
+        # Today or tomorrow label
+        date_label = "Today" if match_date == today else "Tomorrow"
         
         # Confidence emoji
         confidence_emoji = {
@@ -46,8 +74,10 @@ def format_daily_tips(tips: List[Dict[str, Any]]) -> str:
         formatted_msg += f"*TIP #{i}*: {confidence_emoji} {tip.get('confidence', 'Medium')} Confidence\n"
         formatted_msg += f"🏆 {tip.get('league', '')}\n"
         formatted_msg += f"⚽ {tip.get('match', '')}\n"
+        formatted_msg += f"📅 {date_label}"
         if match_time:
-            formatted_msg += f"🕒 {match_time}\n"
+            formatted_msg += f" 🕒 {match_time}"
+        formatted_msg += "\n"
         formatted_msg += f"💰 *Bet*: {tip.get('tip', '')}\n"
         formatted_msg += f"📊 Odds: {tip.get('odds', '-')} ({tip.get('bookmaker', '')})\n"
         formatted_msg += f"💵 Stake: {tip.get('stake', 0):.2f} units\n\n"
