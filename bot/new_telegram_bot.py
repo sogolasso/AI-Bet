@@ -16,8 +16,12 @@ from pathlib import Path
 from telegram import Update, BotCommand
 from telegram.constants import ParseMode
 from telegram.ext import (
-    Updater, CommandHandler, CallbackContext, Dispatcher, Application,
-    ContextTypes, MessageHandler, filters
+    Application,
+    CommandHandler,
+    ContextTypes,
+    MessageHandler,
+    filters,
+    CallbackContext,
 )
 
 from betting.betting_advisor import BettingAdvisor
@@ -48,8 +52,7 @@ class BettingAdvisorBot:
         """
         self.token = token
         self.config = config or {}
-        self.updater = None
-        self.dispatcher = None
+        self.application = None
         self.advisor = BettingAdvisor(config=self.config)
         
         # Set up command throttling to prevent abuse
@@ -63,23 +66,22 @@ class BettingAdvisorBot:
     
     async def initialize(self) -> None:
         """Initialize the bot application and set up command handlers."""
-        # Create the updater
-        self.updater = Updater(token=self.token, use_context=True)
-        self.dispatcher = self.updater.dispatcher
+        # Create the application
+        self.application = Application.builder().token(self.token).build()
         
         # Add command handlers
-        self.dispatcher.add_handler(CommandHandler("start", self.start_command))
-        self.dispatcher.add_handler(CommandHandler("help", self.help_command))
-        self.dispatcher.add_handler(CommandHandler("tips", self.tips_command))
-        self.dispatcher.add_handler(CommandHandler("performance", self.performance_command))
-        self.dispatcher.add_handler(CommandHandler("status", self.status_command))
-        self.dispatcher.add_handler(CommandHandler("roi", self.roi_command))
-        self.dispatcher.add_handler(CommandHandler("lastbets", self.last_bets_command))
-        self.dispatcher.add_handler(CommandHandler("restart", self.restart_command))
-        self.dispatcher.add_handler(CommandHandler("todaystips", self.tips_command))  # Alias for tips
+        self.application.add_handler(CommandHandler("start", self.start_command))
+        self.application.add_handler(CommandHandler("help", self.help_command))
+        self.application.add_handler(CommandHandler("tips", self.tips_command))
+        self.application.add_handler(CommandHandler("performance", self.performance_command))
+        self.application.add_handler(CommandHandler("status", self.status_command))
+        self.application.add_handler(CommandHandler("roi", self.roi_command))
+        self.application.add_handler(CommandHandler("lastbets", self.last_bets_command))
+        self.application.add_handler(CommandHandler("restart", self.restart_command))
+        self.application.add_handler(CommandHandler("todaystips", self.tips_command))  # Alias for tips
         
         # Add error handler
-        self.dispatcher.add_error_handler(self.error_handler)
+        self.application.add_error_handler(self.error_handler)
         
         # Set up commands for the bot UI
         await self._setup_commands()
@@ -98,8 +100,8 @@ class BettingAdvisorBot:
             disable_web_page_preview: Disable link previews in the message
         """
         try:
-            if self.updater and self.updater.bot:
-                await self.updater.bot.send_message(
+            if self.application:
+                await self.application.bot.send_message(
                     chat_id=chat_id,
                     text=text,
                     parse_mode=parse_mode,
@@ -108,7 +110,7 @@ class BettingAdvisorBot:
                 )
                 logger.debug(f"Sent message to chat {chat_id}: {text[:30]}...")
             else:
-                logger.error("Bot updater not initialized, cannot send message")
+                logger.error("Bot application not initialized, cannot send message")
         except Exception as e:
             logger.error(f"Error sending message to chat {chat_id}: {e}")
     
@@ -125,7 +127,7 @@ class BettingAdvisorBot:
             BotCommand("restart", "Request system restart (admin only)")
         ]
         
-        await asyncio.to_thread(self.updater.bot.set_my_commands, commands)
+        await self.application.bot.set_my_commands(commands)
     
     def is_admin(self, user_id: int) -> bool:
         """Check if a user ID is an admin.
@@ -161,21 +163,25 @@ class BettingAdvisorBot:
     
     async def start(self) -> None:
         """Start the Telegram bot."""
-        if not self.updater:
+        if not self.application:
             await self.initialize()
         
         logger.info("Starting Telegram bot")
-        self.updater.start_polling()
+        await self.application.initialize()
+        await self.application.start()
+        await self.application.updater.start_polling()
     
     async def stop(self) -> None:
         """Stop the Telegram bot."""
-        if self.updater:
+        if self.application:
             logger.info("Stopping Telegram bot")
-            self.updater.stop()
+            await self.application.updater.stop()
+            await self.application.stop()
+            await self.application.shutdown()
     
     # Command handlers
     
-    def start_command(self, update: Update, context: CallbackContext) -> None:
+    async def start_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle the /start command.
         
         Args:
@@ -198,14 +204,14 @@ class BettingAdvisorBot:
             "🚨 *Disclaimer*: Betting involves risk. Please gamble responsibly."
         )
         
-        update.message.reply_text(
+        await update.message.reply_text(
             welcome_message,
             parse_mode=ParseMode.MARKDOWN
         )
         
         logger.info(f"User {user_id} started the bot")
     
-    def help_command(self, update: Update, context: CallbackContext) -> None:
+    async def help_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle the /help command.
         
         Args:
@@ -219,14 +225,14 @@ class BettingAdvisorBot:
         
         help_message = format_help_message()
         
-        update.message.reply_text(
+        await update.message.reply_text(
             help_message,
             parse_mode=ParseMode.MARKDOWN
         )
         
         logger.info(f"User {user_id} requested help")
     
-    async def tips_command(self, update: Update, context: CallbackContext) -> None:
+    async def tips_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle the /tips and /todaystips commands.
         
         Args:
@@ -239,7 +245,7 @@ class BettingAdvisorBot:
             return
         
         # Send typing indicator
-        context.bot.send_chat_action(
+        await context.bot.send_chat_action(
             chat_id=update.effective_chat.id,
             action="typing"
         )
@@ -250,14 +256,14 @@ class BettingAdvisorBot:
         # Format and send tips
         tips_message = format_daily_tips(tips)
         
-        update.message.reply_text(
+        await update.message.reply_text(
             tips_message,
             parse_mode=ParseMode.MARKDOWN
         )
         
         logger.info(f"User {user_id} requested tips")
     
-    async def performance_command(self, update: Update, context: CallbackContext) -> None:
+    async def performance_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle the /performance command.
         
         Args:
@@ -270,7 +276,7 @@ class BettingAdvisorBot:
             return
         
         # Send typing indicator
-        context.bot.send_chat_action(
+        await context.bot.send_chat_action(
             chat_id=update.effective_chat.id,
             action="typing"
         )
@@ -285,14 +291,14 @@ class BettingAdvisorBot:
         # Format and send performance report
         performance_message = format_performance_report(performance)
         
-        update.message.reply_text(
+        await update.message.reply_text(
             performance_message,
             parse_mode=ParseMode.MARKDOWN
         )
         
         logger.info(f"User {user_id} requested performance report for {days} days")
     
-    def status_command(self, update: Update, context: CallbackContext) -> None:
+    async def status_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle the /status command.
         
         Args:
@@ -310,14 +316,14 @@ class BettingAdvisorBot:
         # Format and send status message
         status_message = format_system_status(status)
         
-        update.message.reply_text(
+        await update.message.reply_text(
             status_message,
             parse_mode=ParseMode.MARKDOWN
         )
         
         logger.info(f"User {user_id} requested system status")
     
-    async def roi_command(self, update: Update, context: CallbackContext) -> None:
+    async def roi_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle the /roi command.
         
         Args:
@@ -330,7 +336,7 @@ class BettingAdvisorBot:
             return
         
         # Send typing indicator
-        context.bot.send_chat_action(
+        await context.bot.send_chat_action(
             chat_id=update.effective_chat.id,
             action="typing"
         )
@@ -364,14 +370,14 @@ class BettingAdvisorBot:
                 roi_sign = "+" if market_roi >= 0 else ""
                 roi_message += f"• {market}: {roi_sign}{market_roi:.2f}% ({data.get('bets', 0)} bets)\n"
         
-        update.message.reply_text(
+        await update.message.reply_text(
             roi_message,
             parse_mode=ParseMode.MARKDOWN
         )
         
         logger.info(f"User {user_id} requested ROI for {days} days")
     
-    def last_bets_command(self, update: Update, context: CallbackContext) -> None:
+    async def last_bets_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle the /lastbets command.
         
         Args:
@@ -384,7 +390,7 @@ class BettingAdvisorBot:
             return
         
         # Send typing indicator
-        context.bot.send_chat_action(
+        await context.bot.send_chat_action(
             chat_id=update.effective_chat.id,
             action="typing"
         )
@@ -400,14 +406,14 @@ class BettingAdvisorBot:
         # Format and send last bets message
         last_bets_message = format_last_bets(bets, limit=limit)
         
-        update.message.reply_text(
+        await update.message.reply_text(
             last_bets_message,
             parse_mode=ParseMode.MARKDOWN
         )
         
         logger.info(f"User {user_id} requested last {limit} bets")
     
-    async def restart_command(self, update: Update, context: CallbackContext) -> None:
+    async def restart_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle the /restart command (admin only).
         
         Args:
@@ -418,7 +424,7 @@ class BettingAdvisorBot:
         
         # Check if user is admin
         if not self.is_admin(user_id):
-            update.message.reply_text(
+            await update.message.reply_text(
                 "⛔ Sorry, this command is only available to admins.",
                 parse_mode=ParseMode.MARKDOWN
             )
@@ -428,7 +434,7 @@ class BettingAdvisorBot:
         if self.is_throttled(user_id, "restart"):
             return
         
-        update.message.reply_text(
+        await update.message.reply_text(
             "🔄 *System restart initiated.* This may take a minute...",
             parse_mode=ParseMode.MARKDOWN
         )
@@ -440,12 +446,12 @@ class BettingAdvisorBot:
         
         await asyncio.sleep(3)  # Simulate restart time
         
-        update.message.reply_text(
+        await update.message.reply_text(
             "✅ *System restarted successfully.*\nAll services are now running.",
             parse_mode=ParseMode.MARKDOWN
         )
     
-    def error_handler(self, update: object, context: CallbackContext) -> None:
+    async def error_handler(self, update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Handle errors in the bot.
         
         Args:
@@ -471,7 +477,7 @@ class BettingAdvisorBot:
         if update and isinstance(update, Update) and update.effective_message:
             # Only notify about errors on regular commands, not admin commands
             if not update.effective_message.text.startswith(("/restart", "/admin")):
-                update.effective_message.reply_text(
+                await update.effective_message.reply_text(
                     "Sorry, something went wrong while processing your request. "
                     "Please try again later."
                 )
