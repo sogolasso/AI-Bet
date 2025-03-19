@@ -85,25 +85,26 @@ class MatchCollector:
         # List to store all matches from different sources
         all_matches = []
         
-        # First try to scrape from Betano
-        logger.info("Attempting to scrape matches from Betano...")
+        # First try to scrape from Betano using headless browser (most reliable)
+        logger.info("Attempting to scrape matches from Betano using headless browser...")
         try:
-            betano_matches = self._scrape_betano_matches()
+            from data.collectors.betano_scraper import scrape_betano_matches
+            betano_matches = scrape_betano_matches(days_ahead=self.days_ahead)
             if betano_matches:
-                logger.info(f"Successfully scraped {len(betano_matches)} matches from Betano")
+                logger.info(f"Successfully scraped {len(betano_matches)} matches from Betano with headless browser")
                 all_matches.extend(betano_matches)
         except Exception as e:
-            logger.error(f"Error scraping from Betano: {e}")
+            logger.error(f"Error scraping from Betano with headless browser: {e}")
             logger.exception("Exception details:")
         
-        # If Betano scraping provided matches, use those
+        # If headless browser scraping worked, use those matches
         if all_matches:
-            logger.info(f"Using {len(all_matches)} matches from Betano")
+            logger.info(f"Using {len(all_matches)} matches from Betano (headless browser)")
             self.cached_matches = all_matches
             self.cached_time = datetime.now()
             return all_matches
         
-        # If Betano failed, try Football-Data.org API
+        # If headless browser failed, try Football-Data.org API
         try:
             logger.info("Betano scraping failed, trying Football-Data.org API...")
             football_data_matches = await self._fetch_football_data_matches()
