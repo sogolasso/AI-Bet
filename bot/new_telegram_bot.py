@@ -13,8 +13,14 @@ import os
 import json
 from pathlib import Path
 
+# Fix ParseMode import to work with different versions of python-telegram-bot
+try:
+    from telegram.constants import ParseMode
+except ImportError:
+    # Fallback for older versions
+    from telegram import ParseMode
+
 from telegram import Update, BotCommand
-from telegram.constants import ParseMode
 from telegram.ext import (
     Application,
     CommandHandler,
