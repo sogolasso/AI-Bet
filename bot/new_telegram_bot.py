@@ -50,11 +50,13 @@ logger = logging.getLogger(__name__)
 # Load admin user IDs from environment or config
 ADMIN_USER_IDS = [int(id) for id in os.environ.get("TELEGRAM_ADMIN_IDS", "").split(",") if id]
 
-# Create compatibility for ContextTypes.DEFAULT_TYPE
+# Import note for type annotations
 if NEW_API:
-    CONTEXT_TYPE = ContextTypes.DEFAULT_TYPE
+    # Using v20+ API with Application
+    pass
 else:
-    CONTEXT_TYPE = CallbackContext
+    # Using older v13 API with Updater
+    pass
 
 class BettingAdvisorBot:
     """Enhanced Telegram bot for the Football Betting Advisor."""
@@ -267,7 +269,7 @@ class BettingAdvisorBot:
     
     # Command handlers
     
-    async def start_command(self, update: Update, context: CONTEXT_TYPE) -> None:
+    async def start_command(self, update: Update, context: "ContextTypes.DEFAULT_TYPE") -> None:
         """Handle the /start command.
         
         Args:
@@ -297,7 +299,7 @@ class BettingAdvisorBot:
         
         logger.info(f"User {user_id} started the bot")
     
-    async def help_command(self, update: Update, context: CONTEXT_TYPE) -> None:
+    async def help_command(self, update: Update, context: "ContextTypes.DEFAULT_TYPE") -> None:
         """Handle the /help command.
         
         Args:
@@ -318,7 +320,7 @@ class BettingAdvisorBot:
         
         logger.info(f"User {user_id} requested help")
     
-    async def tips_command(self, update: Update, context: CONTEXT_TYPE) -> None:
+    async def tips_command(self, update: Update, context: "ContextTypes.DEFAULT_TYPE") -> None:
         """Handle the /tips and /todaystips commands.
         
         Args:
@@ -349,7 +351,7 @@ class BettingAdvisorBot:
         
         logger.info(f"User {user_id} requested tips")
     
-    async def performance_command(self, update: Update, context: CONTEXT_TYPE) -> None:
+    async def performance_command(self, update: Update, context: "ContextTypes.DEFAULT_TYPE") -> None:
         """Handle the /performance command.
         
         Args:
@@ -384,7 +386,7 @@ class BettingAdvisorBot:
         
         logger.info(f"User {user_id} requested performance report for {days} days")
     
-    async def status_command(self, update: Update, context: CONTEXT_TYPE) -> None:
+    async def status_command(self, update: Update, context: "ContextTypes.DEFAULT_TYPE") -> None:
         """Handle the /status command.
         
         Args:
@@ -409,7 +411,7 @@ class BettingAdvisorBot:
         
         logger.info(f"User {user_id} requested system status")
     
-    async def roi_command(self, update: Update, context: CONTEXT_TYPE) -> None:
+    async def roi_command(self, update: Update, context: "ContextTypes.DEFAULT_TYPE") -> None:
         """Handle the /roi command.
         
         Args:
@@ -463,7 +465,7 @@ class BettingAdvisorBot:
         
         logger.info(f"User {user_id} requested ROI for {days} days")
     
-    async def last_bets_command(self, update: Update, context: CONTEXT_TYPE) -> None:
+    async def last_bets_command(self, update: Update, context: "ContextTypes.DEFAULT_TYPE") -> None:
         """Handle the /lastbets command.
         
         Args:
@@ -499,7 +501,7 @@ class BettingAdvisorBot:
         
         logger.info(f"User {user_id} requested last {limit} bets")
     
-    async def restart_command(self, update: Update, context: CONTEXT_TYPE) -> None:
+    async def restart_command(self, update: Update, context: "ContextTypes.DEFAULT_TYPE") -> None:
         """Handle the /restart command (admin only).
         
         Args:
@@ -537,7 +539,7 @@ class BettingAdvisorBot:
             parse_mode=ParseMode.MARKDOWN
         )
     
-    async def error_handler(self, update: object, context: CONTEXT_TYPE) -> None:
+    async def error_handler(self, update: object, context: "ContextTypes.DEFAULT_TYPE") -> None:
         """Handle errors in the bot.
         
         Args:
