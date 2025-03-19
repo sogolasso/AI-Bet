@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 class BetanoScraper:
     """Selenium-based headless browser scraper for Betano."""
     
-    def __init__(self, days_ahead: int = 1):
+    def __init__(self, days_ahead: int = 2):
         """Initialize the Betano scraper.
         
         Args:
@@ -30,7 +30,8 @@ class BetanoScraper:
         self.urls = [
             # Primary Betano URLs
             'https://www.betano.pt/sport/futebol/jogos-de-hoje/',
-            'https://www.betano.pt/sport/futebol/jogos-de-amanha/'
+            'https://www.betano.pt/sport/futebol/jogos-de-amanha/',
+            'https://www.betano.pt/sport/futebol/jogos-2-dias/'
         ]
         # Add more days if needed
         if days_ahead > 2:
@@ -38,11 +39,11 @@ class BetanoScraper:
         
         # User agents for randomization
         self.user_agents = [
-            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/109.0.0.0 Safari/537.36',
-            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15',
-            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Safari/537.36 OPR/102.0.0.0',
-            'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:120.0) Gecko/20100101 Firefox/120.0',
-            'Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:120.0) Gecko/20100101 Firefox/120.0'
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36 Edg/119.0.0.0',
+            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.4 Safari/605.1.15',
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/121.0',
+            'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.0.0 Safari/537.36'
         ]
         
         # Screen sizes for randomization
@@ -63,12 +64,15 @@ class BetanoScraper:
         # Set up Chrome options
         chrome_options = Options()
         
-        # Remove headless mode - Betano might be detecting headless browsers
+        # Disable headless mode for Betano which appears to detect headless browsers
         # chrome_options.add_argument("--headless=new")
         
-        # Choose a random user agent
-        user_agent = random.choice(self.user_agents)
+        # Choose a random user agent, preferring Portuguese localized browsers
+        user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         chrome_options.add_argument(f"user-agent={user_agent}")
+        
+        # Set Portuguese language to help with localization
+        chrome_options.add_argument("--lang=pt-PT")
         
         # Choose a random screen size
         width, height = random.choice(self.screen_sizes)
@@ -79,8 +83,7 @@ class BetanoScraper:
         chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
         chrome_options.add_experimental_option("useAutomationExtension", False)
         
-        # Performance options
-        chrome_options.add_argument("--disable-gpu")
+        # Performance options but keeping rendering for better compatibility
         chrome_options.add_argument("--no-sandbox")
         chrome_options.add_argument("--disable-dev-shm-usage")
         chrome_options.add_argument("--disable-extensions")
@@ -88,16 +91,24 @@ class BetanoScraper:
         # Additional anti-bot detection options
         chrome_options.add_argument("--disable-features=IsolateOrigins,site-per-process")
         chrome_options.add_argument("--disable-site-isolation-trials")
-        chrome_options.add_argument("--disable-web-security")
         
-        # Disable images to speed up loading
-        chrome_options.add_argument("--blink-settings=imagesEnabled=false")
+        # Enable cookies
+        chrome_options.add_argument("--enable-cookies")
         
         # Set up proxy if provided in environment variables
         proxy = os.environ.get("HTTP_PROXY")
         if proxy:
             chrome_options.add_argument(f"--proxy-server={proxy}")
             logger.info(f"Using proxy: {proxy}")
+        
+        # Custom preferences
+        prefs = {
+            "profile.default_content_setting_values.notifications": 2,
+            "credentials_enable_service": False,
+            "profile.password_manager_enabled": False,
+            "intl.accept_languages": "pt-PT,pt,en-US,en"
+        }
+        chrome_options.add_experimental_option("prefs", prefs)
         
         # Set up the service
         service = Service(ChromeDriverManager().install())
@@ -111,42 +122,22 @@ class BetanoScraper:
                 Object.defineProperty(navigator, 'webdriver', {
                     get: () => undefined
                 });
-                Object.defineProperty(navigator, 'plugins', {
-                    get: () => [
-                        {
-                            0: {type: "application/x-google-chrome-pdf", suffixes: "pdf", description: "Portable Document Format"},
-                            description: "Portable Document Format",
-                            filename: "internal-pdf-viewer",
-                            name: "Chrome PDF Plugin"
-                        },
-                        {
-                            0: {type: "application/pdf", suffixes: "pdf", description: "Portable Document Format"},
-                            description: "Portable Document Format",
-                            filename: "mhjfbmdgcfjbbpaeojofohoefgiehjai",
-                            name: "Chrome PDF Viewer"
-                        },
-                        {
-                            0: {type: "application/x-nacl", suffixes: "", description: "Native Client Executable"},
-                            description: "Native Client Executable",
-                            filename: "internal-nacl-plugin",
-                            name: "Native Client"
-                        }
-                    ]
-                });
+                
+                // Spoof languages - prioritize Portuguese
                 Object.defineProperty(navigator, 'languages', {
                     get: () => ['pt-PT', 'pt', 'en-US', 'en']
                 });
+                
+                // Set Windows platform
                 Object.defineProperty(navigator, 'platform', {
                     get: () => 'Win32'
                 });
                 
-                // Overwrite the `plugins` property to use a custom getter.
+                // Add plugins for authenticity
                 Object.defineProperty(navigator, 'plugins', {
                     get: () => {
-                        // Create a plugins array with the correct length
                         const plugins = new Array(3);
                         
-                        // Define properties on the plugins
                         Object.defineProperties(plugins, {
                             'length': {
                                 value: 3,
@@ -184,7 +175,6 @@ class BetanoScraper:
                             }
                         });
                         
-                        // Add non-enumerable methods that normal plugins have
                         plugins.refresh = () => {};
                         plugins.item = () => null;
                         plugins.namedItem = () => null;
@@ -193,25 +183,23 @@ class BetanoScraper:
                     }
                 });
                 
-                // Spoof hardwareConcurrency
+                // Spoof hardware properties
                 Object.defineProperty(navigator, 'hardwareConcurrency', {
                     get: () => 8
                 });
                 
-                // Spoof device memory
                 Object.defineProperty(navigator, 'deviceMemory', {
                     get: () => 8
                 });
                 
-                // Spoof touch support
+                // Spoof WebGL renderer
                 const originalGetParameter = WebGLRenderingContext.prototype.getParameter;
                 WebGLRenderingContext.prototype.getParameter = function(parameter) {
-                    // Spoof WebGL renderer and vendor
                     if (parameter === 37445) {
                         return 'Intel Inc.';
                     }
                     if (parameter === 37446) {
-                        return 'Intel(R) Iris(TM) Graphics 6100';
+                        return 'Intel(R) UHD Graphics 630';
                     }
                     return originalGetParameter.apply(this, arguments);
                 };
@@ -220,6 +208,48 @@ class BetanoScraper:
         
         return driver
     
+    def _handle_cookie_consent(self, driver: webdriver.Chrome) -> bool:
+        """Handle the cookie consent popup and login prompt if they appear.
+        
+        Args:
+            driver: The WebDriver instance
+            
+        Returns:
+            Boolean indicating if cookie consent was handled successfully
+        """
+        try:
+            # Wait for page to load enough to check for cookie consent
+            time.sleep(3)
+            
+            # Look for the cookie consent button that says "SIM, EU ACEITO"
+            try:
+                cookie_button = WebDriverWait(driver, 5).until(
+                    EC.element_to_be_clickable((By.XPATH, "//button[contains(text(), 'SIM, EU ACEITO')]"))
+                )
+                logger.info("Found cookie consent button, clicking it")
+                cookie_button.click()
+                time.sleep(1)
+                return True
+            except:
+                logger.info("No cookie consent button found or already accepted")
+            
+            # Check for login dialog and close it if present
+            try:
+                close_button = WebDriverWait(driver, 5).until(
+                    EC.element_to_be_clickable((By.XPATH, "//button[@class='close-button']"))
+                )
+                logger.info("Found login dialog, closing it")
+                close_button.click()
+                time.sleep(1)
+                return True
+            except:
+                logger.info("No login dialog found")
+                
+            return True
+        except Exception as e:
+            logger.warning(f"Error handling cookie consent: {e}")
+            return False
+            
     def _simulate_human_behavior(self, driver: webdriver.Chrome) -> None:
         """Simulate human behavior to avoid detection.
         
@@ -253,9 +283,8 @@ class BetanoScraper:
         driver.execute_script(f"window.scrollBy(0, {scroll_height});")
         time.sleep(random.uniform(1, 2))
         
-        # Sometimes click on a random area of the page that's not a link
+        # Sometimes click on an empty area
         if random.random() > 0.7:
-            # Find a safe area to click
             driver.execute_script("""
                 const bodyArea = document.createElement('div');
                 bodyArea.style.position = 'absolute';
@@ -265,10 +294,7 @@ class BetanoScraper:
                 bodyArea.style.left = '50%';
                 bodyArea.id = 'safe-click-area';
                 document.body.appendChild(bodyArea);
-                
                 document.getElementById('safe-click-area').click();
-                
-                // Remove after clicking
                 document.getElementById('safe-click-area').remove();
             """)
             time.sleep(random.uniform(0.5, 1))
@@ -277,18 +303,147 @@ class BetanoScraper:
         if random.random() > 0.8:
             driver.execute_script("window.scrollTo(0, 0);")
             time.sleep(random.uniform(1, 1.5))
+
+    def _parse_betano_matches(self, driver: webdriver.Chrome, target_date: datetime) -> List[Dict[str, Any]]:
+        """Parse the Betano page to extract match information.
+        
+        Args:
+            driver: The WebDriver instance
+            target_date: The date for which we're scraping matches
             
-        # Try to dismiss any popups or cookie notices if they appear
+        Returns:
+            List of dictionaries containing match information
+        """
+        matches = []
+        match_count = 0
+        date_str = target_date.strftime("%Y-%m-%d")
+        
         try:
-            # Common cookie consent selectors
-            cookie_buttons = driver.find_elements(By.CSS_SELECTOR, 
-                "button[id*='cookie'], button[class*='cookie'], button[class*='consent'], button[id*='consent']")
-            if cookie_buttons:
-                random_button = random.choice(cookie_buttons)
-                random_button.click()
-                time.sleep(random.uniform(0.5, 1))
-        except Exception:
-            pass
+            # Based on the screenshot, we need to target the events directly
+            # Look for event containers - try multiple selectors based on the page structure
+            events = driver.find_elements(By.CSS_SELECTOR, "div.events-list__grid-event")
+            
+            if not events:
+                # Try alternative selectors
+                events = driver.find_elements(By.CSS_SELECTOR, "div.event")
+                
+            if not events:
+                # Another possible structure
+                events = driver.find_elements(By.CSS_SELECTOR, "div.events-list__grid tr")
+            
+            logger.info(f"Found {len(events)} events on page")
+            
+            for event_idx, event in enumerate(events):
+                try:
+                    # Extract league information 
+                    try:
+                        # Try to get the league from the section header
+                        league_name = "Unknown League"
+                        league_elem = driver.execute_script("""
+                            return arguments[0].closest('div.events-list').querySelector('h2.events-list__title__label');
+                        """, event)
+                        
+                        if league_elem:
+                            league_name = league_elem.text.strip()
+                    except Exception as e:
+                        logger.warning(f"Error getting league name: {e}")
+                        league_name = "Unknown League"
+                    
+                    # Extract team names - based on the screenshot these are under participants-pair-participant
+                    team_elems = event.find_elements(By.CSS_SELECTOR, "span.participants-pair-participant")
+                    
+                    if len(team_elems) < 2:
+                        # Try alternative selectors
+                        team_elems = event.find_elements(By.CSS_SELECTOR, "div.event-description__name")
+                        
+                    if len(team_elems) != 2:
+                        logger.warning(f"Expected 2 teams, found {len(team_elems)}")
+                        continue
+                        
+                    home_team = team_elems[0].text.strip()
+                    away_team = team_elems[1].text.strip()
+                    
+                    # Extract match time - from the screenshot it's in div.starting-time
+                    time_elem = event.find_element(By.CSS_SELECTOR, "div.starting-time")
+                    match_time_str = time_elem.text.strip() if time_elem else "00:00"
+                    
+                    # Parse hour and minute
+                    try:
+                        hour, minute = map(int, match_time_str.split(':'))
+                        match_time = target_date.replace(hour=hour, minute=minute, second=0)
+                    except (ValueError, TypeError) as e:
+                        logger.warning(f"Failed to parse match time: {e}")
+                        # Default time
+                        match_time = target_date.replace(hour=15, minute=0, second=0)
+                    
+                    # Skip matches that have already started
+                    if match_time < datetime.now():
+                        continue
+                    
+                    # Extract odds - based on the screenshot they're in selection-price elements
+                    odds = {
+                        "home_win": 0,
+                        "draw": 0,
+                        "away_win": 0,
+                        "over_2_5": 0,
+                        "under_2_5": 0,
+                        "btts_yes": 0,
+                        "btts_no": 0
+                    }
+                    
+                    # Extract 1X2 odds
+                    try:
+                        selection_elements = event.find_elements(By.CSS_SELECTOR, "span.selection-price")
+                        
+                        if len(selection_elements) >= 3:
+                            # Home Win
+                            home_odds_str = selection_elements[0].text.strip().replace(',', '.')
+                            odds["home_win"] = float(home_odds_str) if home_odds_str else 0
+                            
+                            # Draw
+                            draw_odds_str = selection_elements[1].text.strip().replace(',', '.')
+                            odds["draw"] = float(draw_odds_str) if draw_odds_str else 0
+                            
+                            # Away Win
+                            away_odds_str = selection_elements[2].text.strip().replace(',', '.')
+                            odds["away_win"] = float(away_odds_str) if away_odds_str else 0
+                            
+                            # Over/Under if available
+                            if len(selection_elements) >= 5:
+                                over_odds_str = selection_elements[3].text.strip().replace(',', '.')
+                                odds["over_2_5"] = float(over_odds_str) if over_odds_str else 0
+                                
+                                under_odds_str = selection_elements[4].text.strip().replace(',', '.')
+                                odds["under_2_5"] = float(under_odds_str) if under_odds_str else 0
+                    except Exception as e:
+                        logger.warning(f"Error extracting odds: {e}")
+                    
+                    # Create and add match object
+                    match = {
+                        "id": f"betano_{match_count}",
+                        "home_team": home_team,
+                        "away_team": away_team,
+                        "league": league_name,
+                        "match_time": match_time.isoformat(),
+                        "date": date_str,
+                        "venue": f"{home_team} Stadium",
+                        "odds": odds,
+                        "source": "betano"
+                    }
+                    
+                    matches.append(match)
+                    match_count += 1
+                    
+                    logger.info(f"Extracted match: {home_team} vs {away_team} ({match_time_str}) odds: {odds['home_win']}/{odds['draw']}/{odds['away_win']}")
+                    
+                except Exception as e:
+                    logger.warning(f"Error processing event {event_idx}: {e}")
+                    continue
+                    
+        except Exception as e:
+            logger.error(f"Error parsing matches: {e}")
+            
+        return matches
 
     def scrape_betano_headless(self) -> List[Dict[str, Any]]:
         """Scrape Betano using a headless browser to bypass anti-scraping measures.
@@ -296,11 +451,10 @@ class BetanoScraper:
         Returns:
             List of dictionaries containing match information
         """
-        matches = []
-        match_count = 0
+        all_matches = []
         now = datetime.now()
         
-        # Use hardcoded example data if real scraping fails
+        # Get example matches in case we need to fall back
         example_matches = self._get_example_matches(now)
         
         # Set up the WebDriver
@@ -308,71 +462,10 @@ class BetanoScraper:
         try:
             driver = self._setup_driver()
             
-            # Process each URL
+            # Loop through each URL (today, tomorrow, etc.)
             for url_index, url in enumerate(self.urls):
                 if url_index >= self.days_ahead:
                     break
-                
-                logger.info(f"Scraping Betano URL with headless browser: {url}")
-                
-                # Try up to 3 times with different setups
-                max_retries = 3
-                retry_count = 0
-                success = False
-                
-                while retry_count < max_retries and not success:
-                    try:
-                        # Reset for retry if needed
-                        if retry_count > 0:
-                            logger.info(f"Retry {retry_count + 1}/{max_retries} with new configuration")
-                            # Close and recreate the driver with new settings
-                            if driver:
-                                driver.quit()
-                            driver = self._setup_driver()
-                        
-                        # Navigate to the URL
-                        driver.get(url)
-                        
-                        # Wait for the content to load
-                        try:
-                            # Try multiple selectors for content
-                            try:
-                                # Primary selector
-                                WebDriverWait(driver, 15).until(
-                                    EC.presence_of_element_located((By.CSS_SELECTOR, "div.events-list__grid"))
-                                )
-                            except TimeoutException:
-                                # Alternative selector
-                                WebDriverWait(driver, 10).until(
-                                    EC.presence_of_element_located((By.CSS_SELECTOR, "div.events-list__container"))
-                                )
-                        except TimeoutException:
-                            # If both fail, check if we're on some other page element that indicates content loaded
-                            WebDriverWait(driver, 10).until(
-                                EC.presence_of_element_located((By.CSS_SELECTOR, "div.sport-header-content"))
-                            )
-                            
-                        # Save the HTML to a file for debugging
-                        with open(f"betano_debug_{url_index}.html", "w", encoding="utf-8") as f:
-                            f.write(driver.page_source)
-                        logger.info(f"Saved HTML to betano_debug_{url_index}.html for analysis")
-                        
-                        # Simulate human behavior
-                        self._simulate_human_behavior(driver)
-                        
-                        # Successfully loaded the page
-                        success = True
-                        logger.info("Successfully loaded Betano page")
-                    except TimeoutException:
-                        logger.warning(f"Timeout waiting for page to load, retry {retry_count + 1}/{max_retries}")
-                        retry_count += 1
-                    except Exception as e:
-                        logger.warning(f"Error loading page: {e}, retry {retry_count + 1}/{max_retries}")
-                        retry_count += 1
-                
-                if not success:
-                    logger.error(f"Failed to load page after {max_retries} retries, skipping URL")
-                    continue
                 
                 # Determine the date for this URL
                 if "jogos-de-hoje" in url:
@@ -385,182 +478,101 @@ class BetanoScraper:
                     # Default to today
                     target_date = now
                 
-                date_str = target_date.strftime("%Y-%m-%d")
+                logger.info(f"Scraping Betano URL for {target_date.strftime('%Y-%m-%d')}: {url}")
                 
-                # Parse league containers
-                try:
-                    # Find all league containers
-                    league_containers = driver.find_elements(By.CSS_SELECTOR, "div.events-list__grid")
-                    
-                    if not league_containers:
-                        # Try alternative selector
-                        league_containers = driver.find_elements(By.CSS_SELECTOR, "div.events-list__container")
+                # Try up to 3 times
+                max_retries = 3
+                retry_count = 0
+                success = False
+                
+                while retry_count < max_retries and not success:
+                    try:
+                        # Reset for retry if needed
+                        if retry_count > 0:
+                            logger.info(f"Retry {retry_count + 1}/{max_retries} with new configuration")
+                            if driver:
+                                driver.quit()
+                            driver = self._setup_driver()
                         
-                    if not league_containers:
-                        logger.warning(f"No league containers found on {url}")
-                        continue
-                    
-                    logger.info(f"Found {len(league_containers)} league containers on {url}")
-                    
-                    # Process each league container
-                    for league_idx, league_container in enumerate(league_containers):
-                        # Get the league name
-                        league_name = "Unknown League"
+                        # Navigate to the URL with timeout
+                        driver.set_page_load_timeout(30)
+                        driver.get(url)
+                        
+                        # Handle cookie consent and login prompts
+                        if not self._handle_cookie_consent(driver):
+                            logger.warning("Failed to handle cookie consent, continuing anyway")
+                        
+                        # Wait for critical elements to load
+                        wait_success = False
                         try:
-                            # Find the preceding league header
-                            league_header = driver.execute_script("""
-                                return arguments[0].closest('.events-list')
-                                    .querySelector('.events-list__title h2.events-list__title__label');
-                            """, league_container)
-                            
-                            if league_header:
-                                league_name = league_header.text.strip()
-                        except Exception as e:
-                            logger.warning(f"Error finding league name: {e}")
+                            # Try various selectors that might indicate the page is loaded
+                            WebDriverWait(driver, 15).until(
+                                EC.presence_of_element_located((By.CSS_SELECTOR, "div.events-list__grid"))
+                            )
+                            wait_success = True
+                        except TimeoutException:
+                            try:
+                                WebDriverWait(driver, 10).until(
+                                    EC.presence_of_element_located((By.CSS_SELECTOR, "div.event"))
+                                )
+                                wait_success = True
+                            except TimeoutException:
+                                pass
                         
-                        # Simulate human interaction - scroll to the container
-                        driver.execute_script("arguments[0].scrollIntoView();", league_container)
-                        time.sleep(random.uniform(0.5, 1.5))
-                        
-                        # Find all events (matches) in this league
-                        events = league_container.find_elements(By.CSS_SELECTOR, "div.event")
-                        
-                        if not events:
-                            logger.warning(f"No events found in league container for {league_name}")
+                        if not wait_success:
+                            logger.warning(f"Timeout waiting for event elements, retry {retry_count + 1}/{max_retries}")
+                            retry_count += 1
                             continue
                         
-                        logger.info(f"Found {len(events)} events in {league_name}")
+                        # Save page source for debugging
+                        debug_file = f"betano_debug_{target_date.strftime('%Y%m%d')}.html"
+                        with open(debug_file, "w", encoding="utf-8") as f:
+                            f.write(driver.page_source)
+                        logger.info(f"Saved debug HTML to {debug_file}")
                         
-                        # Process each event
-                        for event_idx, event in enumerate(events):
-                            try:
-                                # Get match time
-                                time_elem = event.find_element(By.CSS_SELECTOR, "div.starting-time")
-                                match_time_str = time_elem.text.strip() if time_elem else "00:00"
-                                
-                                # Parse hour and minute
-                                try:
-                                    hour, minute = map(int, match_time_str.split(':'))
-                                    match_time = target_date.replace(hour=hour, minute=minute, second=0)
-                                except (ValueError, TypeError) as e:
-                                    logger.warning(f"Failed to parse match time: {e}")
-                                    # Default time if parsing fails
-                                    match_time = target_date.replace(hour=15, minute=0, second=0)
-                                
-                                # Skip matches that have already started
-                                if match_time < now:
-                                    continue
-                                
-                                # Get teams
-                                teams_container = event.find_element(By.CSS_SELECTOR, "div.event-description")
-                                
-                                team_elems = teams_container.find_elements(By.CSS_SELECTOR, "span.participants-pair-participant")
-                                
-                                if len(team_elems) < 2:
-                                    # Try alternative selector
-                                    team_elems = teams_container.find_elements(By.CSS_SELECTOR, "div.event-description__name")
-                                    
-                                if len(team_elems) < 2:
-                                    logger.warning("Not enough team elements found")
-                                    continue
-                                
-                                home_team = team_elems[0].text.strip()
-                                away_team = team_elems[1].text.strip()
-                                
-                                # Get odds
-                                odds_containers = event.find_elements(By.CSS_SELECTOR, "div.selections-selections")
-                                
-                                # Initialize odds object
-                                odds = {
-                                    "home_win": 0,
-                                    "draw": 0,
-                                    "away_win": 0,
-                                    "over_2_5": 0,
-                                    "under_2_5": 0,
-                                    "btts_yes": 0,
-                                    "btts_no": 0
-                                }
-                                
-                                # Process 1X2 odds (match winner)
-                                if odds_containers and len(odds_containers) > 0:
-                                    odds_elems = odds_containers[0].find_elements(By.CSS_SELECTOR, "div.selection")
-                                    
-                                    if len(odds_elems) >= 3:
-                                        # Parse 1X2 odds
-                                        try:
-                                            home_odds_elem = odds_elems[0].find_element(By.CSS_SELECTOR, "span.selection-price")
-                                            draw_odds_elem = odds_elems[1].find_element(By.CSS_SELECTOR, "span.selection-price")
-                                            away_odds_elem = odds_elems[2].find_element(By.CSS_SELECTOR, "span.selection-price")
-                                            
-                                            if home_odds_elem:
-                                                odds["home_win"] = float(home_odds_elem.text.strip().replace(',', '.'))
-                                            if draw_odds_elem:
-                                                odds["draw"] = float(draw_odds_elem.text.strip().replace(',', '.'))
-                                            if away_odds_elem:
-                                                odds["away_win"] = float(away_odds_elem.text.strip().replace(',', '.'))
-                                        except (ValueError, NoSuchElementException) as e:
-                                            logger.warning(f"Error parsing 1X2 odds: {e}")
-                                
-                                # Try to get over/under odds if available (second tab)
-                                if len(odds_containers) > 1:
-                                    try:
-                                        over_under_elems = odds_containers[1].find_elements(By.CSS_SELECTOR, "div.selection")
-                                        if len(over_under_elems) >= 2:
-                                            over_elem = over_under_elems[0].find_element(By.CSS_SELECTOR, "span.selection-price")
-                                            under_elem = over_under_elems[1].find_element(By.CSS_SELECTOR, "span.selection-price")
-                                            
-                                            if over_elem:
-                                                odds["over_2_5"] = float(over_elem.text.strip().replace(',', '.'))
-                                            if under_elem:
-                                                odds["under_2_5"] = float(under_elem.text.strip().replace(',', '.'))
-                                    except (ValueError, NoSuchElementException) as e:
-                                        logger.warning(f"Error parsing over/under odds: {e}")
-                                
-                                # Create match object
-                                match_data = {
-                                    "id": f"betano_{match_count}",
-                                    "home_team": home_team,
-                                    "away_team": away_team,
-                                    "league": league_name,
-                                    "match_time": match_time.isoformat(),
-                                    "date": date_str,
-                                    "venue": f"{home_team} Stadium",
-                                    "odds": odds,
-                                    "source": "betano"
-                                }
-                                
-                                match_count += 1
-                                
-                                logger.info(f"Found match: {home_team} vs {away_team} on {date_str} at {match_time.strftime('%H:%M')} with odds 1X2: {odds['home_win']}/{odds['draw']}/{odds['away_win']}")
-                                matches.append(match_data)
-                                
-                                # Random pauses between processing matches
-                                if random.random() > 0.8:
-                                    time.sleep(random.uniform(0.2, 0.7))
-                            except Exception as e:
-                                logger.warning(f"Error processing match: {e}")
-                                continue
-                except Exception as e:
-                    logger.error(f"Error parsing league containers: {e}")
+                        # Simulate human behavior
+                        self._simulate_human_behavior(driver)
+                        
+                        # Parse matches from the page
+                        day_matches = self._parse_betano_matches(driver, target_date)
+                        
+                        if day_matches:
+                            logger.info(f"Successfully extracted {len(day_matches)} matches for {target_date.strftime('%Y-%m-%d')}")
+                            all_matches.extend(day_matches)
+                            success = True
+                        else:
+                            logger.warning(f"No matches found for {target_date.strftime('%Y-%m-%d')}")
+                            retry_count += 1
+                            
+                    except TimeoutException:
+                        logger.warning(f"Timeout loading page, retry {retry_count + 1}/{max_retries}")
+                        retry_count += 1
+                    except Exception as e:
+                        logger.warning(f"Error during scraping: {e}, retry {retry_count + 1}/{max_retries}")
+                        retry_count += 1
                 
-                # Add random delay between pages
-                time.sleep(random.uniform(2, 5))
+                if not success:
+                    logger.error(f"Failed to scrape matches for {target_date.strftime('%Y-%m-%d')} after {max_retries} retries")
+                
+                # Add delay between scraping days
+                time.sleep(random.uniform(3, 5))
+                
         except Exception as e:
-            logger.error(f"Error during Betano headless scraping: {e}")
+            logger.error(f"Error during Betano scraping: {e}")
             logger.exception("Exception details:")
         finally:
             # Clean up
             if driver:
                 driver.quit()
         
-        logger.info(f"Betano headless scraping complete. Found {len(matches)} matches.")
+        logger.info(f"Betano scraping complete. Found {len(all_matches)} matches total.")
         
-        # Return example data if we couldn't scrape anything
-        if not matches:
-            logger.warning("Real scraping failed, using example match data for development")
+        # Only use example data if we found no real matches
+        if not all_matches:
+            logger.warning("No real matches scraped, using example match data for development")
             return example_matches
             
-        return matches
+        return all_matches
     
     def _get_example_matches(self, now: datetime) -> List[Dict[str, Any]]:
         """Get example match data for testing or when scraping fails.
@@ -677,12 +689,12 @@ class BetanoScraper:
         return example_matches
 
 
-def scrape_betano_matches(days_ahead: int = 1) -> List[Dict[str, Any]]:
+def scrape_betano_matches(days_ahead: int = 2) -> List[Dict[str, Any]]:
     """Convenience function to scrape Betano matches.
     
     Args:
         days_ahead: Number of days ahead to scrape
-    
+        
     Returns:
         List of dictionaries containing match information
     """
