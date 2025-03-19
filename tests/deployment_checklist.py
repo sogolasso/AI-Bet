@@ -33,6 +33,14 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Update the import path
+try:
+    # Try the nested import structure first
+    from data.collectors.match_collector import MatchCollector
+except ImportError:
+    # Fall back to the flat structure
+    from data.match_collector import MatchCollector
+
 class DeploymentChecker:
     """Validates system readiness for deployment."""
     
@@ -309,8 +317,6 @@ class DeploymentChecker:
         logger.info("Checking scraper functionality...")
         
         try:
-            from data.match_collector import MatchCollector
-            
             # Initialize scraper
             match_collector = MatchCollector()
             

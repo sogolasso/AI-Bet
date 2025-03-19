@@ -17,6 +17,7 @@ import csv
 from datetime import datetime, timedelta
 from pathlib import Path
 import dotenv
+from typing import Dict, Any, List, Optional, Tuple
 
 # Configure logging
 logging.basicConfig(
@@ -31,6 +32,14 @@ logger = logging.getLogger(__name__)
 
 # Make sure we can import from our project
 sys.path.insert(0, os.path.abspath(os.path.dirname(__file__)))
+
+# Update the import path
+try:
+    # Try the nested import structure first
+    from data.collectors.match_collector import MatchCollector
+except ImportError:
+    # Fall back to the flat structure
+    from data.match_collector import MatchCollector
 
 class ShadowModeRunner:
     """Runs the betting advisor in shadow mode and tracks performance."""
@@ -74,7 +83,6 @@ class ShadowModeRunner:
         logger.info("Setting up shadow mode environment...")
         
         # Import components (done here to ensure environment variables are set first)
-        from data.match_collector import MatchCollector
         from models.prediction import PredictionModel
         from betting.odds_evaluator import OddsEvaluator
         from betting.staking import StakingStrategy, StakingMethod

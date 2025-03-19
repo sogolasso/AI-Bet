@@ -17,6 +17,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 import time
 import platform
+from typing import Dict, List, Any, Tuple
 
 # Configure logging
 logging.basicConfig(
@@ -35,6 +36,14 @@ logger = logging.getLogger("betting_advisor")
 # from betting.odds_evaluator import OddsEvaluator
 # from betting.staking import StakingStrategy
 # from bot.telegram_bot import TelegramBot
+
+# Update the import path
+try:
+    # Try the nested import structure first
+    from data.collectors.match_collector import MatchCollector
+except ImportError:
+    # Fall back to the flat structure
+    from data.match_collector import MatchCollector
 
 class BettingAdvisor:
     """Main class orchestrating the betting workflow."""
@@ -98,7 +107,6 @@ class BettingAdvisor:
     def setup_components(self):
         """Set up the components for the betting advisor."""
         # Import the components (lazy loading)
-        from data.match_collector import MatchCollector
         from models.prediction import PredictionModel
         from betting.odds_evaluator import OddsEvaluator
         from betting.staking import StakingStrategy

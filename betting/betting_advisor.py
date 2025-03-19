@@ -12,8 +12,16 @@ from datetime import datetime, timedelta
 import json
 import os
 from pathlib import Path
+import random
 
-from data.match_collector import MatchCollector
+# Update the import path
+try:
+    # Try the nested import structure first
+    from data.collectors.match_collector import MatchCollector
+except ImportError:
+    # Fall back to the flat structure
+    from data.match_collector import MatchCollector
+
 from data.odds_collector import OddsCollector
 from models.prediction import PredictionModel
 from betting.bet_processor import BetProcessor
@@ -274,7 +282,6 @@ class BettingAdvisor:
         for bet in due_bets:
             # In a real implementation, fetch actual results
             # For demonstration, simulate random outcomes
-            import random
             
             outcome = random.choice(["won", "lost", "lost", "void"])  # Slightly favor losing outcomes
             
