@@ -85,28 +85,52 @@ class MatchCollector:
         # List to store all matches from different sources
         all_matches = []
         
-        # First try to scrape from Betano using headless browser (most reliable)
-        logger.info("Attempting to scrape matches from Betano using headless browser...")
+        # Try to scrape from MelhorOdd.pt
+        logger.info("Attempting to scrape matches from MelhorOdd.pt...")
+        try:
+            from data.collectors.melhorodd_scraper import scrape_melhorodd_matches
+            melhorodd_matches = scrape_melhorodd_matches(days_ahead=self.days_ahead)
+            if melhorodd_matches:
+                logger.info(f"Successfully scraped {len(melhorodd_matches)} matches from MelhorOdd.pt")
+                all_matches.extend(melhorodd_matches)
+        except Exception as e:
+            logger.error(f"Error scraping from MelhorOdd.pt: {e}")
+            logger.exception("Exception details:")
+        
+        # Always try Betano as well to get more matches or as backup
+        logger.info("Attempting to scrape matches from Betano with headless browser...")
         try:
             from data.collectors.betano_scraper import scrape_betano_matches
             betano_matches = scrape_betano_matches(days_ahead=self.days_ahead)
             if betano_matches:
                 logger.info(f"Successfully scraped {len(betano_matches)} matches from Betano with headless browser")
-                all_matches.extend(betano_matches)
+                
+                # Only add unique matches that aren't already in all_matches
+                unique_betano_matches = []
+                existing_match_keys = {f"{m['home_team']}|{m['away_team']}|{m['date']}" for m in all_matches}
+                
+                for match in betano_matches:
+                    match_key = f"{match['home_team']}|{match['away_team']}|{match['date']}"
+                    if match_key not in existing_match_keys:
+                        unique_betano_matches.append(match)
+                
+                if unique_betano_matches:
+                    logger.info(f"Adding {len(unique_betano_matches)} unique matches from Betano")
+                    all_matches.extend(unique_betano_matches)
         except Exception as e:
             logger.error(f"Error scraping from Betano with headless browser: {e}")
             logger.exception("Exception details:")
         
-        # If headless browser scraping worked, use those matches
+        # If either scraper provided matches, use those
         if all_matches:
-            logger.info(f"Using {len(all_matches)} matches from Betano (headless browser)")
+            logger.info(f"Using {len(all_matches)} matches from all scrapers")
             self.cached_matches = all_matches
             self.cached_time = datetime.now()
             return all_matches
-        
-        # If headless browser failed, try Football-Data.org API
+            
+        # If all scrapers failed, try Football-Data.org API
         try:
-            logger.info("Betano scraping failed, trying Football-Data.org API...")
+            logger.info("All scrapers failed, trying Football-Data.org API...")
             football_data_matches = await self._fetch_football_data_matches()
             if football_data_matches:
                 logger.info(f"Successfully fetched {len(football_data_matches)} matches from Football-Data.org")
