@@ -98,9 +98,36 @@ class ProductionMode:
         else:
             logger.info(f"Found token in environment: {telegram_token[:5]}...")
         
+        # Parse admin IDs from environment
+        admin_ids_str = os.environ.get('TELEGRAM_ADMIN_IDS', '')
+        admin_ids = []
+        try:
+            # Remove brackets if present
+            admin_ids_str = admin_ids_str.strip('[]')
+            
+            # Split by comma and strip whitespace
+            admin_id_strings = [id.strip() for id in admin_ids_str.split(',')]
+            
+            # Convert to integers
+            admin_ids = [int(id) for id in admin_id_strings if id.strip().isdigit()]
+            
+            # Update the global constant in the bot module
+            sys.modules['bot.new_telegram_bot'].ADMIN_USER_IDS = admin_ids
+            
+            logger.info(f"Admin IDs set: {admin_ids}")
+        except Exception as e:
+            logger.error(f"Error parsing admin IDs: {e}")
+        
         # Create a bot instance that works with both async and non-async methods
         self.telegram_bot = BettingAdvisorBot(token=telegram_token)
         await self.telegram_bot.initialize()
+        
+        # Start the bot to ensure it's polling for updates
+        try:
+            await self.telegram_bot.start()
+            logger.info("Telegram bot started successfully")
+        except Exception as e:
+            logger.error(f"Failed to start Telegram bot: {e}")
         
         # Add our own sync wrapper method for sending messages
         def sync_send_message(chat_id, text, parse_mode=None):

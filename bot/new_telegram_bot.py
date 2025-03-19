@@ -167,9 +167,30 @@ class BettingAdvisorBot:
             await self.initialize()
         
         logger.info("Starting Telegram bot")
+        
+        # Register commands with Telegram for the menu to appear
+        commands = [
+            BotCommand("start", "Start the bot and get welcome message"),
+            BotCommand("help", "Display help message with available commands"),
+            BotCommand("tips", "Get today's betting tips"),
+            BotCommand("performance", "View performance report"),
+            BotCommand("status", "Check system status"),
+            BotCommand("roi", "View Return on Investment by market"),
+            BotCommand("lastbets", "View recent bets and results"),
+            BotCommand("restart", "Request system restart (admin only)")
+        ]
+        
+        try:
+            await self.application.bot.set_my_commands(commands)
+            logger.info("Bot commands registered successfully")
+        except Exception as e:
+            logger.error(f"Failed to register commands: {e}")
+        
         await self.application.initialize()
         await self.application.start()
         await self.application.updater.start_polling()
+        
+        logger.info("Bot started successfully and is polling for updates")
     
     async def stop(self) -> None:
         """Stop the Telegram bot."""
