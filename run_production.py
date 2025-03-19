@@ -79,6 +79,7 @@ def main():
                 match_collector_content = """
 import logging
 import json
+import time
 from typing import List, Dict, Any
 from datetime import datetime, timedelta
 from pathlib import Path
