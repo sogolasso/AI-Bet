@@ -236,6 +236,67 @@ class MelhorOddScraper:
                 match_containers = soup.select('div.match-container')
                 
             if not match_containers:
+                # Try more selectors based on common betting site patterns
+                match_containers = soup.select('div.event')
+                
+            if not match_containers:
+                match_containers = soup.select('div.fixture')
+                
+            if not match_containers:
+                match_containers = soup.select('div.odds-container')
+                
+            if not match_containers:
+                # Look for any divs that might contain match information
+                match_containers = soup.select('div:has(div.teams), div:has(div.match), div:has(span.team-name)')
+            
+            if not match_containers:
+                # Last attempt with JavaScript rendered content pattern
+                js_content_pattern = re.compile(r'"matches":\s*(\[.+?\])', re.DOTALL)
+                js_match = js_content_pattern.search(html_content)
+                
+                if js_match:
+                    try:
+                        logger.info("Found JavaScript-rendered match data, attempting to parse")
+                        matches_json = js_match.group(1)
+                        matches_data = json.loads(matches_json)
+                        
+                        for match_data in matches_data:
+                            try:
+                                # Extract match info from JSON
+                                match_info = {
+                                    'home_team': match_data.get('homeTeam', {}).get('name', 'Unknown'),
+                                    'away_team': match_data.get('awayTeam', {}).get('name', 'Unknown'),
+                                    'league': match_data.get('competition', {}).get('name', 'Unknown League'),
+                                    'date': datetime.fromisoformat(match_data.get('startTime', '').replace('Z', '+00:00')),
+                                    'url': f"https://www.melhorodd.pt/jogo/{match_data.get('id', '')}"
+                                }
+                                
+                                # Extract odds
+                                odds = match_data.get('odds', {})
+                                match_info.update({
+                                    'home_win': float(odds.get('homeWin', 0)) or 0,
+                                    'draw': float(odds.get('draw', 0)) or 0,
+                                    'away_win': float(odds.get('awayWin', 0)) or 0,
+                                    'over_2_5': float(odds.get('over25', 0)) or 0,
+                                    'under_2_5': float(odds.get('under25', 0)) or 0,
+                                    'btts_yes': float(odds.get('bttsYes', 0)) or 0,
+                                    'btts_no': float(odds.get('bttsNo', 0)) or 0,
+                                })
+                                
+                                matches.append(match_info)
+                                match_count += 1
+                            except Exception as e:
+                                logger.warning(f"Error parsing JS match: {e}")
+                        
+                        if matches:
+                            logger.info(f"Successfully extracted {match_count} matches from JavaScript data")
+                            self.cached_matches = matches
+                            self.cached_time = datetime.now()
+                            return matches
+                    except Exception as e:
+                        logger.warning(f"Failed to parse JavaScript match data: {e}")
+            
+            if not match_containers:
                 # Log all the top-level divs with classes to help debug
                 top_divs = soup.select('div[class]')
                 logger.info(f"Found {len(top_divs)} divs with classes. First 10 classes:")
@@ -248,288 +309,261 @@ class MelhorOddScraper:
             
             if not match_containers:
                 logger.warning("No match containers found on the page")
-                return self._get_example_matches()
+                return self._try_selenium_scrape()
             
             logger.info(f"Found {len(match_containers)} potential match containers")
-            
-            now = datetime.now()
-            max_date = now + timedelta(days=self.days_ahead)
             
             # Process each match container
             for container in match_containers:
                 try:
-                    # Check if this container has team names - a good indicator it's a match
-                    team_elements = None
+                    # Try to extract teams
+                    teams_element = container.select_one('.teams, .team-names, .event-name')
+                    if not teams_element:
+                        teams_element = container
                     
-                    # Try various selectors for team names
-                    for selector in ['span.team-name', 'div.team-name', 'div.team', 'span.team', 'td.team']:
-                        team_elements = container.select(selector)
-                        if len(team_elements) >= 2:
-                            break
+                    teams_text = teams_element.get_text(strip=True)
                     
-                    # If no team elements found, try to find any element with "vs" or "-" in the text
-                    if not team_elements or len(team_elements) < 2:
-                        for element in container.find_all(['span', 'div', 'td', 'p']):
-                            if ' vs ' in element.text or ' - ' in element.text:
-                                teams_text = element.text.strip()
-                                # Split by vs or -
-                                if ' vs ' in teams_text:
-                                    teams = teams_text.split(' vs ')
-                                else:
-                                    teams = teams_text.split(' - ')
-                                
-                                if len(teams) == 2:
-                                    home_team = teams[0].strip()
-                                    away_team = teams[1].strip()
-                                    
-                                    # Extract league name - try different approaches
-                                    league_element = None
-                                    for selector in ['div.league-name', 'div.league', 'span.league', 'td.league']:
-                                        league_element = container.select_one(selector)
-                                        if league_element:
-                                            break
-                                    
-                                    league = league_element.get_text(strip=True) if league_element else "Unknown League"
-                                    
-                                    # Extract match time
-                                    time_element = None
-                                    for selector in ['div.date-hour', 'div.date', 'div.time', 'span.date', 'span.time', 'td.date', 'td.time']:
-                                        time_element = container.select_one(selector)
-                                        if time_element:
-                                            break
-                                    
-                                    match_datetime = self._extract_date_from_match(time_element)
-                                    
-                                    if not match_datetime:
-                                        # Try to find any date-like text in the container
-                                        date_pattern = r'(\d{2}[/.-]\d{2}[/.-]\d{2,4}|\d{2}[/.-]\d{2})'
-                                        time_pattern = r'(\d{1,2}:\d{2})'
-                                        
-                                        for text_element in container.find_all(text=True):
-                                            date_match = re.search(date_pattern, text_element)
-                                            time_match = re.search(time_pattern, text_element)
-                                            
-                                            if date_match and time_match:
-                                                date_str = date_match.group(1)
-                                                time_str = time_match.group(1)
-                                                
-                                                # Try to parse the date and time
-                                                try:
-                                                    # Handle different date formats
-                                                    if '/' in date_str:
-                                                        day, month = map(int, date_str.split('/')[0:2])
-                                                    elif '-' in date_str:
-                                                        day, month = map(int, date_str.split('-')[0:2])
-                                                    elif '.' in date_str:
-                                                        day, month = map(int, date_str.split('.')[0:2])
-                                                    else:
-                                                        continue
-                                                    
-                                                    hour, minute = map(int, time_str.split(':'))
-                                                    current_year = datetime.now().year
-                                                    
-                                                    match_datetime = datetime(
-                                                        year=current_year,
-                                                        month=month,
-                                                        day=day,
-                                                        hour=hour,
-                                                        minute=minute
-                                                    )
-                                                    
-                                                    # If the date is in the past, it might be for next year
-                                                    if match_datetime < datetime.now() - timedelta(hours=3):
-                                                        match_datetime = match_datetime.replace(year=current_year + 1)
-                                                    
-                                                    break
-                                                except Exception as e:
-                                                    logger.debug(f"Failed to parse date/time: {e}")
-                                                    continue
-                                    
-                                    if not match_datetime:
-                                        # Use current date and a default time if parsing fails
-                                        match_datetime = now.replace(hour=15, minute=0, second=0)
-                                    
-                                    # Skip matches that are too far in the future
-                                    if match_datetime > max_date:
-                                        continue
-                                    
-                                    # Skip matches that have already started
-                                    if match_datetime < now:
-                                        continue
-                                    
-                                    # Format the date and time
-                                    date_str = match_datetime.strftime("%Y-%m-%d")
-                                    time_str = match_datetime.strftime("%H:%M")
-                                    
-                                    # Extract odds
-                                    odds = {"home_win": 0, "draw": 0, "away_win": 0, "over_2_5": 0, "under_2_5": 0, "btts_yes": 0, "btts_no": 0}
-                                    
-                                    # Look for numeric values that could be odds
-                                    odd_pattern = r'(\d+[.,]\d+)'
-                                    odd_values = []
-                                    
-                                    for element in container.find_all(['span', 'div', 'td']):
-                                        text = element.get_text(strip=True)
-                                        matches = re.findall(odd_pattern, text)
-                                        for m in matches:
-                                            try:
-                                                odd_values.append(float(m.replace(',', '.')))
-                                            except ValueError:
-                                                pass
-                                    
-                                    # Assign the first 3 values to 1X2 odds if they seem reasonable
-                                    if len(odd_values) >= 3:
-                                        # Filter odds in a reasonable range (1.1 to 20.0)
-                                        filtered_odds = [o for o in odd_values if 1.1 <= o <= 20.0]
-                                        
-                                        if len(filtered_odds) >= 3:
-                                            odds["home_win"] = filtered_odds[0]
-                                            odds["draw"] = filtered_odds[1]
-                                            odds["away_win"] = filtered_odds[2]
-                                            
-                                            if len(filtered_odds) >= 5:
-                                                odds["over_2_5"] = filtered_odds[3]
-                                                odds["under_2_5"] = filtered_odds[4]
-                                    
-                                    # Create match object
-                                    match_data = {
-                                        "id": f"melhorodd_{match_count}",
-                                        "home_team": home_team,
-                                        "away_team": away_team,
-                                        "league": league,
-                                        "match_time": match_datetime.isoformat(),
-                                        "date": date_str,
-                                        "venue": f"{home_team} Stadium",
-                                        "odds": odds,
-                                        "source": "melhorodd_scrape"
-                                    }
-                                    
-                                    matches.append(match_data)
-                                    match_count += 1
-                                    
-                                    logger.info(f"Extracted match: {home_team} vs {away_team} ({date_str} {time_str}) odds: {odds['home_win']}/{odds['draw']}/{odds['away_win']}")
-                                    break
-                        
-                    # If we already processed this container as a match with the vs/- method
-                    if matches and matches[-1]["id"] == f"melhorodd_{match_count-1}":
+                    # Skip if this doesn't look like a match
+                    if 'vs' not in teams_text.lower() and '-' not in teams_text and '–' not in teams_text:
                         continue
                     
-                    # If we found proper team elements
-                    if team_elements and len(team_elements) >= 2:
-                        home_team = team_elements[0].get_text(strip=True)
-                        away_team = team_elements[1].get_text(strip=True)
+                    # Extract home and away teams
+                    if 'vs' in teams_text.lower():
+                        home_team, away_team = teams_text.split('vs', 1)
+                    elif '-' in teams_text:
+                        home_team, away_team = teams_text.split('-', 1)
+                    elif '–' in teams_text:
+                        home_team, away_team = teams_text.split('–', 1)
+                    else:
+                        # Try to find team names in separate elements
+                        home_elem = container.select_one('.home-team, .team-home')
+                        away_elem = container.select_one('.away-team, .team-away')
                         
-                        # Extract league name
-                        league_element = None
-                        for selector in ['div.league-name', 'div.league', 'span.league', 'td.league']:
-                            league_element = container.select_one(selector)
-                            if league_element:
-                                break
-                                
-                        league = league_element.get_text(strip=True) if league_element else "Unknown League"
-                        
-                        # Extract match time
-                        time_element = None
-                        for selector in ['div.date-hour', 'div.date', 'div.time', 'span.date', 'span.time', 'td.date', 'td.time']:
-                            time_element = container.select_one(selector)
-                            if time_element:
-                                break
-                                
-                        match_datetime = self._extract_date_from_match(time_element)
-                        
-                        if not match_datetime:
-                            # Use current date and a default time if parsing fails
-                            match_datetime = now.replace(hour=15, minute=0, second=0)
-                        
-                        # Skip matches that are too far in the future
-                        if match_datetime > max_date:
-                            continue
-                        
-                        # Skip matches that have already started
-                        if match_datetime < now:
-                            continue
-                        
-                        # Format the date and time
-                        date_str = match_datetime.strftime("%Y-%m-%d")
-                        time_str = match_datetime.strftime("%H:%M")
-                        
-                        # Extract odds
-                        odds = {"home_win": 0, "draw": 0, "away_win": 0, "over_2_5": 0, "under_2_5": 0, "btts_yes": 0, "btts_no": 0}
-                        
-                        # Try to find odds elements
-                        odds_elements = []
-                        for selector in ['span.odd-value', 'div.odd', 'span.odd', 'td.odd']:
-                            odds_elements = container.select(selector)
-                            if odds_elements:
-                                break
-                                
-                        if odds_elements:
-                            odds = self._parse_odds(odds_elements)
+                        if home_elem and away_elem:
+                            home_team = home_elem.get_text(strip=True)
+                            away_team = away_elem.get_text(strip=True)
                         else:
-                            # Look for numeric values that could be odds
-                            odd_pattern = r'(\d+[.,]\d+)'
-                            odd_values = []
-                            
-                            for element in container.find_all(['span', 'div', 'td']):
-                                text = element.get_text(strip=True)
-                                matches = re.findall(odd_pattern, text)
-                                for m in matches:
-                                    try:
-                                        odd_values.append(float(m.replace(',', '.')))
-                                    except ValueError:
-                                        pass
-                            
-                            # Assign the first 3 values to 1X2 odds if they seem reasonable
-                            if len(odd_values) >= 3:
-                                # Filter odds in a reasonable range (1.1 to 20.0)
-                                filtered_odds = [o for o in odd_values if 1.1 <= o <= 20.0]
-                                
-                                if len(filtered_odds) >= 3:
-                                    odds["home_win"] = filtered_odds[0]
-                                    odds["draw"] = filtered_odds[1]
-                                    odds["away_win"] = filtered_odds[2]
-                                    
-                                    if len(filtered_odds) >= 5:
-                                        odds["over_2_5"] = filtered_odds[3]
-                                        odds["under_2_5"] = filtered_odds[4]
-                        
-                        # Create match object
-                        match_data = {
-                            "id": f"melhorodd_{match_count}",
-                            "home_team": home_team,
-                            "away_team": away_team,
-                            "league": league,
-                            "match_time": match_datetime.isoformat(),
-                            "date": date_str,
-                            "venue": f"{home_team} Stadium",
-                            "odds": odds,
-                            "source": "melhorodd_scrape"
-                        }
-                        
-                        matches.append(match_data)
-                        match_count += 1
-                        
-                        logger.info(f"Extracted match: {home_team} vs {away_team} ({date_str} {time_str}) odds: {odds['home_win']}/{odds['draw']}/{odds['away_win']}")
+                            continue
+                    
+                    # Clean up team names
+                    home_team = home_team.strip()
+                    away_team = away_team.strip()
+                    
+                    # Skip if either team name is empty
+                    if not home_team or not away_team:
+                        continue
+                    
+                    # Extract match time
+                    match_time_elem = container.select_one('.match-time, .time, .date, .event-time')
+                    match_datetime = self._extract_date_from_match(match_time_elem)
+                    
+                    # Skip matches in the past
+                    if not match_datetime or match_datetime < datetime.now() - timedelta(hours=3):
+                        continue
+                    
+                    # Skip matches too far in the future
+                    if match_datetime > datetime.now() + timedelta(days=self.days_ahead):
+                        continue
+                    
+                    # Extract league/competition
+                    league_elem = container.select_one('.league, .competition, .tournament')
+                    league = "Unknown League"
+                    if league_elem:
+                        league = league_elem.get_text(strip=True)
+                    
+                    # Extract odds elements
+                    odds_elements = container.select('.odd, .odds, .price')
+                    
+                    # If no odds elements found, try more selectors
+                    if not odds_elements:
+                        odds_elements = container.select('span[data-odd], div[data-odd]')
+                    
+                    if not odds_elements:
+                        odds_elements = container.select('.odd-value, .odd-price')
+                    
+                    odds = self._parse_odds(odds_elements)
+                    
+                    # Create the match dictionary
+                    match_info = {
+                        'home_team': home_team,
+                        'away_team': away_team,
+                        'league': league,
+                        'date': match_datetime,
+                        'source': 'melhorodd',
+                        'url': self.base_url,
+                    }
+                    
+                    # Add the odds to the match info
+                    match_info.update(odds)
+                    
+                    matches.append(match_info)
+                    match_count += 1
                     
                 except Exception as e:
-                    logger.warning(f"Error processing match container: {e}")
+                    logger.debug(f"Error processing match container: {e}")
                     continue
             
-            logger.info(f"Successfully extracted {len(matches)} matches from MelhorOdd.pt")
+            logger.info(f"Successfully extracted {match_count} matches from MelhorOdd.pt")
             
-            # Cache the matches if we found any
             if matches:
                 self.cached_matches = matches
                 self.cached_time = datetime.now()
                 return matches
             else:
                 logger.warning("No matches found on the page")
-                return self._get_example_matches()
+                return self._try_selenium_scrape()
                 
         except Exception as e:
-            logger.error(f"Error scraping matches from MelhorOdd.pt: {e}")
+            logger.error(f"Error scraping MelhorOdd.pt: {e}")
             logger.exception("Exception details:")
-            return self._get_example_matches()
+            return self._try_selenium_scrape()
+            
+    def _try_selenium_scrape(self) -> List[Dict[str, Any]]:
+        """Try to scrape using Selenium as a fallback method.
+        
+        Returns:
+            List of dictionaries containing match information
+        """
+        logger.info("Attempting to scrape with Selenium as fallback")
+        try:
+            # Import necessary libraries
+            from selenium import webdriver
+            from selenium.webdriver.chrome.service import Service
+            from selenium.webdriver.chrome.options import Options
+            from selenium.webdriver.common.by import By
+            from selenium.webdriver.support.ui import WebDriverWait
+            from selenium.webdriver.support import expected_conditions as EC
+            from webdriver_manager.chrome import ChromeDriverManager
+            
+            # Configure Chrome options
+            chrome_options = Options()
+            chrome_options.add_argument('--headless')
+            chrome_options.add_argument('--disable-gpu')
+            chrome_options.add_argument('--no-sandbox')
+            chrome_options.add_argument('--disable-dev-shm-usage')
+            chrome_options.add_argument(f'--user-agent={random.choice(self.user_agents)}')
+            
+            # Initialize the Chrome driver
+            logger.info("Initializing Chrome WebDriver")
+            driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=chrome_options)
+            
+            try:
+                # Navigate to the page
+                logger.info(f"Navigating to {self.base_url}")
+                driver.get(self.base_url)
+                
+                # Wait for the page to load (wait for match containers)
+                wait = WebDriverWait(driver, 20)
+                wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, 'div.event, div.match, div.fixture, table.events-table')))
+                
+                # Scroll down to load all content
+                driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+                time.sleep(3)
+                
+                # Get the page source after JavaScript execution
+                page_source = driver.page_source
+                
+                # Save the page source to a file for debugging
+                with open('melhorodd_selenium_debug.html', 'w', encoding='utf-8') as f:
+                    f.write(page_source)
+                logger.info("Saved Selenium-rendered HTML to melhorodd_selenium_debug.html")
+                
+                # Parse with BeautifulSoup
+                soup = BeautifulSoup(page_source, 'html.parser')
+                
+                # Try to find match containers again
+                match_containers = soup.select('div.event, div.match, div.fixture, tr.event-row')
+                
+                if not match_containers:
+                    logger.warning("No match containers found in Selenium-rendered page")
+                    return self._get_example_matches()
+                
+                matches = []
+                match_count = 0
+                
+                # Process each match container (similar logic as before)
+                for container in match_containers:
+                    try:
+                        # Extract teams
+                        teams_element = container.select_one('.teams, .team-names, .event-name')
+                        if not teams_element:
+                            continue
+                        
+                        teams_text = teams_element.get_text(strip=True)
+                        
+                        # Skip if this doesn't look like a match
+                        if 'vs' not in teams_text.lower() and '-' not in teams_text and '–' not in teams_text:
+                            continue
+                        
+                        # Extract home and away teams
+                        if 'vs' in teams_text.lower():
+                            home_team, away_team = teams_text.split('vs', 1)
+                        elif '-' in teams_text:
+                            home_team, away_team = teams_text.split('-', 1)
+                        elif '–' in teams_text:
+                            home_team, away_team = teams_text.split('–', 1)
+                        else:
+                            continue
+                        
+                        # Clean up team names
+                        home_team = home_team.strip()
+                        away_team = away_team.strip()
+                        
+                        # Extract match time
+                        match_time_elem = container.select_one('.match-time, .time, .date')
+                        match_datetime = self._extract_date_from_match(match_time_elem)
+                        
+                        if not match_datetime:
+                            continue
+                        
+                        # Extract league
+                        league_elem = container.select_one('.league, .competition, .tournament')
+                        league = "Unknown League"
+                        if league_elem:
+                            league = league_elem.get_text(strip=True)
+                        
+                        # Extract odds
+                        odds_elements = container.select('.odd, .odds, .price')
+                        odds = self._parse_odds(odds_elements)
+                        
+                        # Create match dictionary
+                        match_info = {
+                            'home_team': home_team,
+                            'away_team': away_team,
+                            'league': league,
+                            'date': match_datetime,
+                            'source': 'melhorodd_selenium',
+                            'url': self.base_url,
+                        }
+                        
+                        # Add odds
+                        match_info.update(odds)
+                        
+                        matches.append(match_info)
+                        match_count += 1
+                        
+                    except Exception as e:
+                        logger.debug(f"Error processing Selenium match container: {e}")
+                        continue
+                
+                logger.info(f"Successfully extracted {match_count} matches from MelhorOdd.pt with Selenium")
+                
+                if matches:
+                    self.cached_matches = matches
+                    self.cached_time = datetime.now()
+                    return matches
+                
+            finally:
+                # Close the driver
+                driver.quit()
+                logger.info("Closed Selenium WebDriver")
+            
+        except Exception as e:
+            logger.error(f"Error using Selenium to scrape MelhorOdd.pt: {e}")
+            logger.exception("Exception details:")
+        
+        # If Selenium fails, use example matches
+        return self._get_example_matches()
     
     def _get_example_matches(self) -> List[Dict[str, Any]]:
         """Get example match data for testing or when scraping fails.
