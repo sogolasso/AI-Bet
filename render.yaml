@@ -3,7 +3,7 @@ services:
     name: football-betting-advisor
     env: python
     buildCommand: pip install -r requirements.txt
-    startCommand: python run_production.py
+    startCommand: python3 run_production.py
     envVars:
       - key: TELEGRAM_BOT_TOKEN
         sync: false
@@ -19,7 +19,7 @@ services:
     env: python
     buildCommand: pip install -r requirements.txt
     schedule: "0 12 * * *"
-    startCommand: python run_daily_production.py --mode tips
+    startCommand: python3 run_daily_production.py --mode tips
     envVars:
       - key: TELEGRAM_BOT_TOKEN
         sync: false
@@ -34,7 +34,7 @@ services:
     env: python
     buildCommand: pip install -r requirements.txt
     schedule: "0 22 * * *"
-    startCommand: python run_daily_production.py --mode results
+    startCommand: python3 run_daily_production.py --mode results
     envVars:
       - key: TELEGRAM_BOT_TOKEN
         sync: false

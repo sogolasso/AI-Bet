@@ -13,9 +13,11 @@ import os
 import json
 from pathlib import Path
 
-from telegram import Update, ParseMode, BotCommand
+from telegram import Update, BotCommand
+from telegram.constants import ParseMode
 from telegram.ext import (
-    Updater, CommandHandler, CallbackContext, Dispatcher
+    Updater, CommandHandler, CallbackContext, Dispatcher, Application,
+    ContextTypes, MessageHandler, filters
 )
 
 from betting.betting_advisor import BettingAdvisor
