@@ -61,44 +61,64 @@ class MatchCollector:
         cache_file = self.cache_dir / f"upcoming_matches_{self.days_ahead}.json"
         if cache_file.exists():
             cache_time = datetime.fromtimestamp(cache_file.stat().st_mtime)
-            # Make the cache last only 15 minutes to ensure fresher data during development
-            if datetime.now() - cache_time < timedelta(minutes=15):  # Cache valid for 15 minutes
+            # Make the cache last only 5 minutes to ensure fresher data during development
+            if datetime.now() - cache_time < timedelta(minutes=5):  # Cache valid for 5 minutes
                 logger.info("Using cached upcoming matches")
                 with open(cache_file, 'r') as f:
-                    return json.load(f)
+                    cached_data = json.load(f)
+                    if cached_data:
+                        logger.info(f"Loaded {len(cached_data)} matches from cache")
+                        return cached_data
+                    else:
+                        logger.warning("Cache exists but contains no matches, will fetch fresh data")
         
         # Try to get real match data from different sources
         matches = []
-        error_occurred = False
         
+        # Update user agent with a realistic browser
+        self.headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+            'Accept-Language': 'en-US,en;q=0.5',
+            'Accept-Encoding': 'gzip, deflate, br',
+            'Connection': 'keep-alive',
+            'Upgrade-Insecure-Requests': '1',
+            'Cache-Control': 'max-age=0'
+        }
+        
+        # Try updated Fotmob first
+        logger.info("Attempting to fetch matches from Fotmob...")
         try:
-            # First try Fotmob
             matches = self._fetch_fotmob_matches()
-            
-            # If Fotmob didn't return any matches, try Livescore
-            if not matches:
-                logger.info("No matches from Fotmob, trying Livescore")
-                matches = self._fetch_livescore_matches()
-            
-            # If we still have no matches, log a warning
-            if not matches:
-                logger.warning("Could not fetch real match data from any source")
-                error_occurred = True
+            if matches:
+                logger.info(f"Successfully fetched {len(matches)} matches from Fotmob")
         except Exception as e:
-            logger.error(f"Error fetching match data: {e}")
+            logger.error(f"Error fetching from Fotmob: {e}")
             logger.exception("Exception details:")
-            error_occurred = True
         
-        # Only fall back to mock data if an error occurred or no matches were found
-        if error_occurred or not matches:
-            logger.warning("Falling back to mock data")
-            matches = self._generate_mock_upcoming_matches()
+        # If Fotmob didn't return matches, try Livescore
+        if not matches:
+            logger.info("No matches from Fotmob, attempting to fetch from Livescore...")
+            try:
+                matches = self._fetch_livescore_matches()
+                if matches:
+                    logger.info(f"Successfully fetched {len(matches)} matches from Livescore")
+            except Exception as e:
+                logger.error(f"Error fetching from Livescore: {e}")
+                logger.exception("Exception details:")
+        
+        # If we have matches, cache them
+        if matches:
+            logger.info(f"Successfully fetched {len(matches)} real matches, caching results")
+            try:
+                with open(cache_file, 'w') as f:
+                    json.dump(matches, f, indent=2)
+            except Exception as e:
+                logger.error(f"Error caching match data: {e}")
         else:
-            logger.info(f"Successfully fetched {len(matches)} real matches")
-        
-        # Cache the results
-        with open(cache_file, 'w') as f:
-            json.dump(matches, f, indent=2)
+            # No matches found and no fallback to mock data
+            logger.error("CRITICAL: Could not fetch any real match data from any source")
+            logger.error("This advisor only works with real match data. Please check your internet connection and try again.")
         
         return matches
     
@@ -115,93 +135,92 @@ class MatchCollector:
             try:
                 url = f"https://www.fotmob.com/api/matches?date={date_str}"
                 logger.info(f"Fetching matches from Fotmob for date: {date_str}")
+                logger.debug(f"Requesting URL: {url}")
                 
                 response = requests.get(url, headers=self.headers, timeout=10)
+                logger.debug(f"Fotmob response status: {response.status_code}")
+                
                 if response.status_code == 200:
                     data = response.json()
+                    logger.debug(f"Fotmob data received, leagues: {len(data.get('leagues', []))}")
                     
                     # Process leagues
                     for league in data.get('leagues', []):
                         league_name = league.get('name', 'Unknown League')
                         country = league.get('ccode', '')
                         
-                        # Filter to major leagues for better quality data
-                        major_leagues = [
-                            'Premier League', 'LaLiga', 'Bundesliga', 'Serie A', 
-                            'Ligue 1', 'Champions League', 'Europa League', 
-                            'Conference League', 'World Cup', 'Euro'
-                        ]
+                        # Include more leagues to increase chance of finding matches
+                        top_countries = ['ENG', 'ESP', 'GER', 'ITA', 'FRA', 'NED', 'POR', 'BRA', 'ARG', 'USA', 'MEX']
                         
-                        if any(major in league_name for major in major_leagues) or country in ['ENG', 'ESP', 'GER', 'ITA', 'FRA']:
-                            for match in league.get('matches', []):
-                                match_date = target_date.strftime("%Y-%m-%d")
-                                
-                                # Parse time
-                                match_time = None
-                                if 'status' in match and 'utcTime' in match['status']:
-                                    try:
-                                        utc_time = int(match['status']['utcTime']) / 1000  # Convert milliseconds to seconds
-                                        match_time = datetime.fromtimestamp(utc_time)
-                                    except (ValueError, TypeError) as e:
-                                        logger.warning(f"Failed to parse match time: {e}")
-                                
-                                if not match_time:
-                                    # Use default time if can't parse
-                                    hour = 15 + (len(matches) % 4)
-                                    match_time = target_date.replace(hour=hour, minute=0, second=0)
-                                
-                                home_team = match.get('home', {}).get('name', 'Unknown Team')
-                                away_team = match.get('away', {}).get('name', 'Unknown Team')
-                                
-                                # Skip matches that have already started
-                                if match_time < now:
-                                    continue
-                                
-                                # Get odds if available
-                                odds = {
-                                    "home_win": 0,
-                                    "draw": 0,
-                                    "away_win": 0,
-                                    "over_2_5": 0,
-                                    "under_2_5": 0,
-                                    "btts_yes": 0,
-                                    "btts_no": 0
-                                }
-                                
+                        # Process all leagues, not just major ones
+                        for match in league.get('matches', []):
+                            match_date = target_date.strftime("%Y-%m-%d")
+                            
+                            # Parse time
+                            match_time = None
+                            if 'status' in match and 'utcTime' in match['status']:
                                 try:
-                                    if 'odds' in match and '1x2' in match['odds']:
-                                        odds_data = match['odds']['1x2']
-                                        if isinstance(odds_data, list) and len(odds_data) >= 3:
-                                            odds["home_win"] = float(odds_data[0])
-                                            odds["draw"] = float(odds_data[1])
-                                            odds["away_win"] = float(odds_data[2])
-                                except Exception as e:
-                                    logger.warning(f"Error parsing odds: {e}")
-                                
-                                match_data = {
-                                    "id": str(match.get('id', f"{day_offset}_{len(matches)}")),
-                                    "home_team": home_team,
-                                    "away_team": away_team,
-                                    "league": f"{league_name}",
-                                    "match_time": match_time.isoformat(),
-                                    "date": match_date,
-                                    "venue": match.get('venue', {}).get('name', f"{home_team} Stadium"),
-                                    "odds": odds
-                                }
-                                
-                                logger.info(f"Found match: {home_team} vs {away_team} on {match_date} at {match_time.strftime('%H:%M')}")
-                                matches.append(match_data)
+                                    utc_time = int(match['status']['utcTime']) / 1000  # Convert milliseconds to seconds
+                                    match_time = datetime.fromtimestamp(utc_time)
+                                    logger.debug(f"Parsed time: {match_time}")
+                                except (ValueError, TypeError) as e:
+                                    logger.warning(f"Failed to parse match time: {e}")
+                            
+                            if not match_time:
+                                # Use default time if can't parse
+                                hour = 15 + (len(matches) % 4)
+                                match_time = target_date.replace(hour=hour, minute=0, second=0)
+                                logger.debug(f"Using default time: {match_time}")
+                            
+                            home_team = match.get('home', {}).get('name', 'Unknown Team')
+                            away_team = match.get('away', {}).get('name', 'Unknown Team')
+                            
+                            # Skip matches that have already started
+                            if match_time < now:
+                                logger.debug(f"Skipping past match: {home_team} vs {away_team}")
+                                continue
+                            
+                            # Get odds if available
+                            odds = {
+                                "home_win": 0,
+                                "draw": 0,
+                                "away_win": 0,
+                                "over_2_5": 0,
+                                "under_2_5": 0,
+                                "btts_yes": 0,
+                                "btts_no": 0
+                            }
+                            
+                            try:
+                                if 'odds' in match and '1x2' in match['odds']:
+                                    odds_data = match['odds']['1x2']
+                                    if isinstance(odds_data, list) and len(odds_data) >= 3:
+                                        odds["home_win"] = float(odds_data[0])
+                                        odds["draw"] = float(odds_data[1])
+                                        odds["away_win"] = float(odds_data[2])
+                                        logger.debug(f"Parsed odds: {odds}")
+                            except Exception as e:
+                                logger.warning(f"Error parsing odds: {e}")
+                            
+                            match_data = {
+                                "id": str(match.get('id', f"{day_offset}_{len(matches)}")),
+                                "home_team": home_team,
+                                "away_team": away_team,
+                                "league": f"{league_name}",
+                                "match_time": match_time.isoformat(),
+                                "date": match_date,
+                                "venue": match.get('venue', {}).get('name', f"{home_team} Stadium"),
+                                "odds": odds
+                            }
+                            
+                            logger.info(f"Found match: {home_team} vs {away_team} on {match_date} at {match_time.strftime('%H:%M')}")
+                            matches.append(match_data)
             except Exception as e:
                 logger.error(f"Error fetching from Fotmob for date {date_str}: {e}")
                 logger.exception("Exception details:")
         
-        # Check if we actually got any matches
-        if matches:
-            logger.info(f"Successfully fetched {len(matches)} matches from Fotmob")
-            return matches
-        else:
-            logger.warning("No matches found from Fotmob")
-            return []
+        logger.info(f"Fotmob fetching complete. Found {len(matches)} matches.")
+        return matches
     
     def _fetch_livescore_matches(self) -> List[Dict[str, Any]]:
         """Fetch upcoming matches from Livescore."""
@@ -209,14 +228,19 @@ class MatchCollector:
         now = datetime.now()
         
         try:
-            # Try to fetch from the API first (newer approach)
-            api_url = "https://api.livescore.com/v1/api/app/date/soccer/20230316/0?MD=1"
-            logger.info(f"Fetching matches from Livescore API")
+            # Try newer date format YYYYMMDD
+            current_date = now.strftime("%Y%m%d")
+            api_url = f"https://api.livescore.com/v1/api/app/date/soccer/{current_date}/0?MD=1"
+            logger.info(f"Fetching matches from Livescore API with URL: {api_url}")
             
             try:
                 response = requests.get(api_url, headers=self.headers, timeout=10)
+                logger.debug(f"Livescore API response status: {response.status_code}")
+                
                 if response.status_code == 200:
                     data = response.json()
+                    logger.debug(f"Livescore data received, stages: {len(data.get('Stages', []))}")
+                    
                     stages = data.get('Stages', [])
                     
                     for stage in stages:
@@ -224,118 +248,179 @@ class MatchCollector:
                         events = stage.get('Events', [])
                         
                         for event in events:
-                            home_team = event.get('T1', [{}])[0].get('Nm', 'Unknown Team')
-                            away_team = event.get('T2', [{}])[0].get('Nm', 'Unknown Team')
-                            
-                            # Parse time
-                            event_time_str = event.get('Esd', '')
-                            match_time = now.replace(hour=16, minute=0, second=0)  # Default time
-                            match_date = now.strftime("%Y-%m-%d")
-                            
-                            if event_time_str:
-                                try:
-                                    # Format is usually like "/Date(1679169600000)/"
-                                    time_match = re.search(r'\((\d+)\)', event_time_str)
-                                    if time_match:
-                                        timestamp = int(time_match.group(1)) / 1000
-                                        dt = datetime.fromtimestamp(timestamp)
-                                        match_time = dt
-                                        match_date = dt.strftime("%Y-%m-%d")
-                                except Exception as e:
-                                    logger.warning(f"Failed to parse event time: {e}")
-                            
-                            # Skip matches that have already started
-                            if match_time < now:
-                                continue
+                            try:
+                                home_team = event.get('T1', [{}])[0].get('Nm', 'Unknown Team')
+                                away_team = event.get('T2', [{}])[0].get('Nm', 'Unknown Team')
                                 
-                            match_data = {
-                                "id": f"ls_api_{event.get('Eid', len(matches))}",
-                                "home_team": home_team,
-                                "away_team": away_team,
-                                "league": league_name,
-                                "match_time": match_time.isoformat(),
-                                "date": match_date,
-                                "venue": event.get('Stnm', f"{home_team} Stadium"),
-                                "odds": {
-                                    "home_win": 0,
-                                    "draw": 0,
-                                    "away_win": 0,
-                                    "over_2_5": 0,
-                                    "under_2_5": 0,
-                                    "btts_yes": 0,
-                                    "btts_no": 0
+                                # Parse time
+                                event_time_str = event.get('Esd', '')
+                                match_time = now.replace(hour=16, minute=0, second=0)  # Default time
+                                match_date = now.strftime("%Y-%m-%d")
+                                
+                                if event_time_str:
+                                    try:
+                                        # Format is usually like "/Date(1679169600000)/"
+                                        time_match = re.search(r'\((\d+)\)', event_time_str)
+                                        if time_match:
+                                            timestamp = int(time_match.group(1)) / 1000
+                                            dt = datetime.fromtimestamp(timestamp)
+                                            match_time = dt
+                                            match_date = dt.strftime("%Y-%m-%d")
+                                            logger.debug(f"Parsed event time: {match_time}")
+                                    except Exception as e:
+                                        logger.warning(f"Failed to parse event time: {e}")
+                                
+                                # Skip matches that have already started
+                                if match_time < now:
+                                    logger.debug(f"Skipping past match: {home_team} vs {away_team}")
+                                    continue
+                                    
+                                match_data = {
+                                    "id": f"ls_api_{event.get('Eid', len(matches))}",
+                                    "home_team": home_team,
+                                    "away_team": away_team,
+                                    "league": league_name,
+                                    "match_time": match_time.isoformat(),
+                                    "date": match_date,
+                                    "venue": event.get('Stnm', f"{home_team} Stadium"),
+                                    "odds": {
+                                        "home_win": 0,
+                                        "draw": 0,
+                                        "away_win": 0,
+                                        "over_2_5": 0,
+                                        "under_2_5": 0,
+                                        "btts_yes": 0,
+                                        "btts_no": 0
+                                    }
                                 }
-                            }
-                            
-                            logger.info(f"Found match: {home_team} vs {away_team} on {match_date} at {match_time.strftime('%H:%M')}")
-                            matches.append(match_data)
+                                
+                                logger.info(f"Found match: {home_team} vs {away_team} on {match_date} at {match_time.strftime('%H:%M')}")
+                                matches.append(match_data)
+                            except Exception as e:
+                                logger.warning(f"Error processing event: {e}")
+                                continue
             except Exception as e:
                 logger.error(f"Error fetching from Livescore API: {e}")
                 logger.exception("API request error details:")
             
             # If API approach failed, try web scraping as fallback
             if not matches:
-                url = "https://www.livescore.com/en/football/"
-                logger.info(f"Trying fallback method: scraping Livescore website")
+                # Try with a different URL format
+                url = "https://www.livescore.com/en/football/all/"
+                logger.info(f"Trying fallback method: scraping Livescore website with URL: {url}")
                 
                 response = requests.get(url, headers=self.headers, timeout=10)
+                logger.debug(f"Livescore website response status: {response.status_code}")
+                
                 if response.status_code == 200:
                     html_content = response.text
+                    logger.debug(f"Received HTML content of length: {len(html_content)}")
                     
-                    # Very basic scraping - look for title patterns that usually indicate matches
-                    match_titles = re.findall(r'<title>(.+?) vs (.+?) - (\d{1,2}/\d{1,2}/\d{2,4})', html_content)
-                    
-                    for idx, (home, away, date_str) in enumerate(match_titles):
-                        # Parse date (assuming DD/MM/YYYY format)
+                    # Look for JSON data embedded in the HTML
+                    json_match = re.search(r'window.__INITIAL_STATE__ = (\{.*?\});', html_content, re.DOTALL)
+                    if json_match:
                         try:
-                            day, month, year = map(int, date_str.split('/'))
-                            if year < 100:
-                                year += 2000  # Convert 2-digit year to 4-digit
+                            json_str = json_match.group(1)
+                            json_data = json.loads(json_str)
                             
-                            match_date = datetime(year, month, day)
-                            date_str = match_date.strftime("%Y-%m-%d")
-                            
-                            # Default time
-                            match_time = match_date.replace(hour=15 + (idx % 4), minute=0, second=0)
-                            
-                            # Skip matches that have already started
-                            if match_time < now:
-                                continue
-                                
-                            match_data = {
-                                "id": f"ls_web_{idx}",
-                                "home_team": home,
-                                "away_team": away,
-                                "league": "Unknown League",
-                                "match_time": match_time.isoformat(),
-                                "date": date_str,
-                                "venue": f"{home} Stadium",
-                                "odds": {
-                                    "home_win": 0,
-                                    "draw": 0,
-                                    "away_win": 0,
-                                    "over_2_5": 0,
-                                    "under_2_5": 0,
-                                    "btts_yes": 0,
-                                    "btts_no": 0
-                                }
-                            }
-                            
-                            logger.info(f"Found match: {home} vs {away} on {date_str} at {match_time.strftime('%H:%M')}")
-                            matches.append(match_data)
+                            # Extract match data from the JSON structure
+                            if 'matches' in json_data:
+                                for match_id, match_info in json_data['matches'].items():
+                                    home_team = match_info.get('home', {}).get('name', 'Unknown Team')
+                                    away_team = match_info.get('away', {}).get('name', 'Unknown Team')
+                                    league_name = match_info.get('league', {}).get('name', 'Unknown League')
+                                    start_time = match_info.get('startTime')
+                                    
+                                    if start_time:
+                                        try:
+                                            match_time = datetime.fromtimestamp(start_time / 1000)
+                                            match_date = match_time.strftime("%Y-%m-%d")
+                                        except:
+                                            match_time = now.replace(hour=16, minute=0, second=0)
+                                            match_date = now.strftime("%Y-%m-%d")
+                                    else:
+                                        match_time = now.replace(hour=16, minute=0, second=0)
+                                        match_date = now.strftime("%Y-%m-%d")
+                                    
+                                    # Skip matches that have already started
+                                    if match_time < now:
+                                        continue
+                                    
+                                    match_data = {
+                                        "id": f"ls_json_{match_id}",
+                                        "home_team": home_team,
+                                        "away_team": away_team,
+                                        "league": league_name,
+                                        "match_time": match_time.isoformat(),
+                                        "date": match_date,
+                                        "venue": match_info.get('venue', {}).get('name', f"{home_team} Stadium"),
+                                        "odds": {
+                                            "home_win": 0,
+                                            "draw": 0,
+                                            "away_win": 0,
+                                            "over_2_5": 0,
+                                            "under_2_5": 0,
+                                            "btts_yes": 0,
+                                            "btts_no": 0
+                                        }
+                                    }
+                                    
+                                    logger.info(f"Found match: {home_team} vs {away_team} on {match_date} at {match_time.strftime('%H:%M')}")
+                                    matches.append(match_data)
                         except Exception as e:
-                            logger.warning(f"Error parsing match date: {e}")
+                            logger.error(f"Error parsing embedded JSON: {e}")
+                    
+                    # If we still don't have matches, try basic title-based pattern matching
+                    if not matches:
+                        # Very basic scraping - look for title patterns that usually indicate matches
+                        match_titles = re.findall(r'<title>(.+?) vs (.+?) - (\d{1,2}/\d{1,2}/\d{2,4})', html_content)
+                        
+                        for idx, (home, away, date_str) in enumerate(match_titles):
+                            # Parse date (assuming DD/MM/YYYY format)
+                            try:
+                                day, month, year = map(int, date_str.split('/'))
+                                if year < 100:
+                                    year += 2000  # Convert 2-digit year to 4-digit
+                                
+                                match_date = datetime(year, month, day)
+                                date_str = match_date.strftime("%Y-%m-%d")
+                                
+                                # Default time
+                                match_time = match_date.replace(hour=15 + (idx % 4), minute=0, second=0)
+                                
+                                # Skip matches that have already started
+                                if match_time < now:
+                                    continue
+                                    
+                                match_data = {
+                                    "id": f"ls_web_{idx}",
+                                    "home_team": home,
+                                    "away_team": away,
+                                    "league": "Unknown League",
+                                    "match_time": match_time.isoformat(),
+                                    "date": date_str,
+                                    "venue": f"{home} Stadium",
+                                    "odds": {
+                                        "home_win": 0,
+                                        "draw": 0,
+                                        "away_win": 0,
+                                        "over_2_5": 0,
+                                        "under_2_5": 0,
+                                        "btts_yes": 0,
+                                        "btts_no": 0
+                                    }
+                                }
+                                
+                                logger.info(f"Found match: {home} vs {away} on {date_str} at {match_time.strftime('%H:%M')}")
+                                matches.append(match_data)
+                            except Exception as e:
+                                logger.warning(f"Error parsing match date: {e}")
         except Exception as e:
             logger.error(f"Error fetching from Livescore: {e}")
             logger.exception("Exception details:")
         
-        # Check if we actually got any matches
-        if matches:
-            logger.info(f"Successfully fetched {len(matches)} matches from Livescore")
-            return matches
-        else:
-            logger.warning("No matches found from Livescore")
-            return []
+        logger.info(f"Livescore fetching complete. Found {len(matches)} matches.")
+        return matches
     
     async def process_matches(self, matches: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """Process matches for prediction."""
@@ -417,72 +502,3 @@ class MatchCollector:
             "goals_scored": goals_scored,
             "goals_conceded": goals_conceded
         }
-    
-    def _generate_mock_upcoming_matches(self) -> List[Dict[str, Any]]:
-        """Generate mock upcoming matches for testing."""
-        logger.warning("Using MOCK match data - for development only!")
-        
-        teams = [
-            ("Liverpool", "Premier League"),
-            ("Manchester City", "Premier League"),
-            ("Arsenal", "Premier League"),
-            ("Chelsea", "Premier League")
-        ]
-        
-        matches = []
-        now = datetime.now()
-        
-        # Debug print to show the current date/time
-        logger.info(f"Current datetime: {now.strftime('%Y-%m-%d %H:%M:%S')}")
-        
-        # Start from today (day=0) instead of tomorrow (day=1)
-        for day in range(0, self.days_ahead):
-            match_date = now + timedelta(days=day)
-            # Debug print to show what date we're generating matches for
-            logger.info(f"Generating mock matches for: {match_date.strftime('%Y-%m-%d')}")
-            
-            # Generate 2 matches per day
-            for i in range(2):
-                home_idx = (i * 2) % len(teams)
-                away_idx = (i * 2 + 1) % len(teams)
-                
-                home_team, league = teams[home_idx]
-                away_team, _ = teams[away_idx]
-                
-                # Generate match time - ensure it's future time if it's today
-                hour = 15 + (i % 4)
-                minute = 0
-                
-                # If it's today and the hour is in the past, move to a future time
-                if day == 0 and hour < now.hour:
-                    hour = now.hour + 1
-                    minute = 30  # Set to 30 minutes from now if in the current hour
-                
-                match_time = match_date.replace(hour=hour, minute=minute, second=0)
-                
-                match = {
-                    "id": f"match_{day}_{i+1}",
-                    "home_team": home_team,
-                    "away_team": away_team,
-                    "league": league,
-                    "match_time": match_time.isoformat(),
-                    # Add date field for easier filtering
-                    "date": match_date.strftime("%Y-%m-%d"),
-                    "venue": f"{home_team} Stadium",
-                    "odds": {
-                        "home_win": 1.8,
-                        "draw": 3.2,
-                        "away_win": 4.5,
-                        "over_2_5": 1.9,
-                        "under_2_5": 2.0,
-                        "btts_yes": 1.8,
-                        "btts_no": 2.1
-                    }
-                }
-                
-                # Debug print for each match
-                logger.info(f"Added mock match: {home_team} vs {away_team} on {match_date.strftime('%Y-%m-%d')} at {hour}:{minute:02d}")
-                
-                matches.append(match)
-        
-        return matches

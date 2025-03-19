@@ -356,9 +356,11 @@ class BettingAdvisor:
             # Use the match collector to get real matches
             matches = await self.match_collector.get_upcoming_matches()
             
-            if not matches:
-                logger.warning("No matches found, cannot generate tips")
-                return []
+            # Ensure we have real match data
+            if not matches or len(matches) == 0:
+                error_msg = "No real match data found. Unable to generate betting tips."
+                logger.error(error_msg)
+                raise ValueError(error_msg)
             
             logger.info(f"Found {len(matches)} upcoming matches")
             
@@ -396,6 +398,12 @@ class BettingAdvisor:
             selected_matches = today_matches
             if len(selected_matches) < 5:
                 selected_matches.extend(tomorrow_matches[:5-len(selected_matches)])
+            
+            # Ensure we have at least one match
+            if not selected_matches:
+                error_msg = "No matches available for today or tomorrow. Unable to generate betting tips."
+                logger.error(error_msg)
+                raise ValueError(error_msg)
             
             selected_matches = selected_matches[:5]
             
@@ -455,8 +463,18 @@ class BettingAdvisor:
                 
                 tips.append(tip)
             
+            # Verify we actually have tips
+            if not tips:
+                error_msg = "Failed to generate any betting tips from available matches."
+                logger.error(error_msg)
+                raise ValueError(error_msg)
+                
             return tips
             
+        except ValueError as e:
+            logger.error(f"Error generating tips: {str(e)}")
+            logger.exception("Exception details:")
+            raise
         except Exception as e:
             logger.error(f"Error generating tips: {e}")
             logger.exception("Exception details:")
