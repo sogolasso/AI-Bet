@@ -171,10 +171,14 @@ class BettingAdvisorBot:
             BotCommand("restart", "Request system restart (admin only)")
         ]
         
-        if NEW_API:
-            await self.application.bot.set_my_commands(commands)
-        else:
-            await self.updater.bot.set_my_commands(commands)
+        try:
+            if NEW_API:
+                await self.application.bot.set_my_commands(commands)
+            else:
+                # Use synchronous method for older versions
+                self.updater.bot.set_my_commands(commands)
+        except Exception as e:
+            logger.error(f"Error setting bot commands: {e}")
     
     def is_admin(self, user_id: int) -> bool:
         """Check if a user ID is an admin.
@@ -231,6 +235,7 @@ class BettingAdvisorBot:
             if NEW_API:
                 await self.application.bot.set_my_commands(commands)
             else:
+                # Use synchronous method for older versions
                 self.updater.bot.set_my_commands(commands)
             logger.info("Bot commands registered successfully")
         except Exception as e:
