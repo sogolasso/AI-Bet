@@ -30,6 +30,11 @@ class MatchCollector:
         self.cache_dir = Path("data/cache")
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         
+        # Initialize cache variables
+        self.cached_matches = []
+        self.cached_time = datetime.now() - timedelta(days=1)  # Set to expired
+        self.cache_duration = 3600  # Cache duration in seconds (1 hour)
+        
         # Development flag - when True, will fall back to mock data as last resort
         # This should ONLY be true in development environments
         self.is_development = os.environ.get("DEVELOPMENT_MODE", "").lower() == "true"
