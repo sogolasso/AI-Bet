@@ -56,8 +56,11 @@ class ProductionMode:
         return config
     
     async def setup(self):
-        """Set up the production mode environment and initialize the Telegram bot."""
+        """Set up the production mode environment."""
         logger.info("Setting up production mode environment...")
+        
+        # Make sure the data/collectors directory exists
+        Path("data/collectors").mkdir(parents=True, exist_ok=True)
         
         # Force reload environment variables
         try:

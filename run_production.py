@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python
 """
 Production Mode Launcher for AI Football Betting Advisor
 
@@ -13,6 +13,11 @@ import asyncio
 import subprocess
 from pathlib import Path
 from dotenv import load_dotenv
+import logging
+import shutil
+
+# Configure logging
+logger = logging.getLogger(__name__)
 
 def ensure_directories_exist():
     """Ensure all required directories exist."""
@@ -61,6 +66,23 @@ def main():
         from production_mode import ProductionMode
         
         async def run_production():
+            # Ensure data directories exist
+            os.makedirs('data/collectors', exist_ok=True)
+            
+            # Copy match_collector.py to data/collectors if it doesn't exist there
+            src_match_collector = Path('data/match_collector.py')
+            dst_match_collector = Path('data/collectors/match_collector.py')
+            if src_match_collector.exists() and not dst_match_collector.exists():
+                shutil.copy2(src_match_collector, dst_match_collector)
+                logger.info(f"Copied match_collector.py to {dst_match_collector}")
+            
+            # Copy scraping_utils.py to data/collectors if it doesn't exist there
+            src_utils = Path('data/scraping_utils.py')
+            dst_utils = Path('data/collectors/scraping_utils.py')
+            if src_utils.exists() and not dst_utils.exists():
+                shutil.copy2(src_utils, dst_utils)
+                logger.info(f"Copied scraping_utils.py to {dst_utils}")
+            
             production = ProductionMode()
             await production.run()
             
