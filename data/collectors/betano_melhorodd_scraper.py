@@ -488,9 +488,58 @@ class BetanoMelhorOddScraper:
                         
                         # Extract league
                         league = "Unknown League"
+                        sport_type = "Unknown Sport"
                         if len(cells) > 3:
                             league_cell = cells[3]
                             league = league_cell.get_text(strip=True)
+                            
+                            # Determine the sport type based on the league name
+                            league_lower = league.lower()
+                            
+                            # Check if this is a football match by examining league name
+                            football_indicators = [
+                                'football', 'soccer', 'premier league', 'liga', 'serie a', 'bundesliga', 
+                                'ligue 1', 'championship', 'primeira', 'eredivisie', 'süper lig', 
+                                'europa league', 'champions league', 'world cup', 'copa', 'fa cup',
+                                'carabao cup', 'efl', 'uefa', 'libertadores', 'primera división',
+                                'mls', 'campeonato', 'cup', 'taça', 'division', 'divisão', 'division',
+                                'euro', 'qualif'
+                            ]
+                            
+                            # Non-football sports to explicitly filter out
+                            non_football_sports = [
+                                'nba', 'basketball', 'basquete', 'nhl', 'hockey', 'tennis', 'ténis',
+                                'baseball', 'mlb', 'rugby', 'cricket', 'volleyball', 'volei', 'handball',
+                                'andebol', 'golf', 'snooker', 'darts', 'esports', 'ufc', 'mma', 'boxing', 
+                                'boxe', 'formula 1', 'nascar', 'cycling', 'olympic'
+                            ]
+                            
+                            # Check if we can identify this as football
+                            is_football = any(indicator in league_lower for indicator in football_indicators)
+                            is_non_football = any(sport in league_lower for sport in non_football_sports)
+                            
+                            if is_non_football:
+                                logger.debug(f"Skipping non-football match: {home_team} vs {away_team} in {league}")
+                                continue
+                            
+                            if not is_football:
+                                # If we can't determine it's football, check the team names for football club indicators
+                                team_names = (home_team + " " + away_team).lower()
+                                football_team_indicators = [
+                                    'fc', ' cf', ' sc', 'united', 'city', 'sporting', 'club', 'atletico',
+                                    'benfica', 'porto', 'real', 'barcelona', 'manchester', 'liverpool',
+                                    'chelsea', 'arsenal', 'milan', 'inter', 'juventus', 'bayern', 'dortmund',
+                                    'psg', 'ajax', 'feyenoord', 'psv', 'galatasaray'
+                                ]
+                                if not any(indicator in team_names for indicator in football_team_indicators):
+                                    logger.debug(f"Skipping non-football match based on team names: {home_team} vs {away_team}")
+                                    continue
+                            
+                            sport_type = "Football"
+                        
+                        # Skip non-football matches
+                        if sport_type != "Football":
+                            continue
                         
                         # Extract Betano odds
                         odds = self._extract_betano_odds(row, soup)
@@ -509,6 +558,7 @@ class BetanoMelhorOddScraper:
                             'match_time': match_datetime.isoformat(),
                             'source': 'melhorodd_betano',
                             'url': self.base_url,
+                            'sport': sport_type,
                             'odds': odds
                         }
                         
@@ -519,7 +569,7 @@ class BetanoMelhorOddScraper:
                         logger.debug(f"Error processing row: {e}")
                         continue
                 
-                logger.info(f"Extracted {match_count} matches with Betano odds")
+                logger.info(f"Extracted {match_count} football matches with Betano odds")
             
             # If we found matches, cache them
             if matches:
@@ -556,6 +606,26 @@ class BetanoMelhorOddScraper:
                             if not betano_odds:
                                 continue
                             
+                            # Check if this is a football match
+                            sport_type = match_data.get('sport', {}).get('name', '').lower()
+                            league_name = match_data.get('competition', {}).get('name', '').lower()
+                            
+                            is_football = False
+                            if sport_type in ['football', 'soccer', 'futebol', 'futbol']:
+                                is_football = True
+                            else:
+                                # Check league name for football indicators
+                                football_indicators = [
+                                    'football', 'soccer', 'premier league', 'liga', 'serie a', 'bundesliga', 
+                                    'ligue 1', 'championship', 'primeira', 'eredivisie', 'süper lig', 
+                                    'europa league', 'champions league', 'world cup', 'copa', 'fa cup'
+                                ]
+                                is_football = any(indicator in league_name for indicator in football_indicators)
+                            
+                            if not is_football:
+                                logger.debug(f"Skipping non-football match from JS data: {match_data.get('homeTeam', {}).get('name')} vs {match_data.get('awayTeam', {}).get('name')}")
+                                continue
+                            
                             # Extract match info
                             match_info = {
                                 'id': f"melhorodd_betano_js_{match_count}",
@@ -566,6 +636,7 @@ class BetanoMelhorOddScraper:
                                 'match_time': match_data.get('startTime', datetime.now().isoformat()),
                                 'source': 'melhorodd_betano_js',
                                 'url': self.base_url,
+                                'sport': 'Football',
                                 'odds': {
                                     'home_win': float(betano_odds.get('homeWin', 0)) or 0,
                                     'draw': float(betano_odds.get('draw', 0)) or 0,
@@ -584,7 +655,7 @@ class BetanoMelhorOddScraper:
                         except Exception as e:
                             logger.warning(f"Error parsing JS match: {e}")
                     
-                    logger.info(f"Extracted {match_count} matches from JavaScript data")
+                    logger.info(f"Extracted {match_count} football matches from JavaScript data")
                     
                     if matches:
                         self.cached_matches = matches
@@ -602,8 +673,8 @@ class BetanoMelhorOddScraper:
             driver.quit()
             logger.info("Closed WebDriver")
         
-        # If we got here, we couldn't find any Betano odds
-        logger.warning("Could not find any Betano odds")
+        # If we got here, we couldn't find any Betano odds for football matches
+        logger.warning("Could not find any Betano odds for football matches")
         return []
 
 def scrape_betano_melhorodd_matches(days_ahead: int = 2) -> List[Dict[str, Any]]:
