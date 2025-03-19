@@ -41,8 +41,8 @@ class BetanoMelhorOddScraper:
         self.cached_matches = []
         self.cached_time = datetime.min
         
-        # Base URL for all games - targeting football directly
-        self.base_url = "https://www.melhorodd.pt/futebol/"
+        # Base URL for all games
+        self.base_url = "https://www.melhorodd.pt/todos-os-jogos/"
         
         # User agents for rotation
         self.user_agents = [
@@ -410,28 +410,69 @@ class BetanoMelhorOddScraper:
             # Parse the page with BeautifulSoup
             soup = BeautifulSoup(page_source, 'html.parser')
             
+            # Try to specifically locate sport information
+            sport_filters = soup.select('a[href*="futebol"], button:contains("Futebol"), div.filter:contains("Futebol")')
+            if sport_filters:
+                logger.info(f"Found {len(sport_filters)} football filter elements on the page")
+                with open("football_filters.html", "w", encoding="utf-8") as f:
+                    for i, filter_elem in enumerate(sport_filters):
+                        f.write(f"--- Football Filter {i+1} ---\n")
+                        f.write(str(filter_elem))
+                        f.write("\n\n")
+            
+            # Log all rows with "Futebol" text
+            futebol_rows = soup.find_all(lambda tag: tag.name and "futebol" in tag.get_text().lower())
+            if futebol_rows:
+                logger.info(f"Found {len(futebol_rows)} elements containing 'futebol' text")
+                with open("futebol_elements.html", "w", encoding="utf-8") as f:
+                    for i, elem in enumerate(futebol_rows):
+                        f.write(f"--- Futebol Element {i+1} ---\n")
+                        f.write(str(elem))
+                        f.write("\n\n")
+            
+            # Look for table headers with "Sport" column
+            all_table_headers = soup.select('tr.header th, tr.head th, thead tr th')
+            sport_columns = [th for th in all_table_headers if 'sport' in th.get_text().lower() or 'esporte' in th.get_text().lower()]
+            if sport_columns:
+                logger.info(f"Found {len(sport_columns)} Sport column headers")
+            
             # Look for tables that might contain odds
             tables = soup.find_all('table')
             logger.info(f"Found {len(tables)} tables on the page")
             
             # Identify the main table with matches and odds
             main_table = None
-            for table in tables:
-                # Check if this table has match data with team names
-                if table.select('tr:has(td:contains("vs"))') or table.select('tr:has(td:contains("-"))'):
-                    main_table = table
-                    break
+            football_tables = soup.select('table[id*="futebol"], table[class*="futebol"], table[id*="football"], table[class*="football"]')
             
-            if not main_table:
-                logger.warning("Could not find the main table with matches")
-                # Try to find any table that might contain matches
+            if football_tables:
+                logger.info(f"Found {len(football_tables)} football-specific tables")
+                main_table = football_tables[0]
+            else:
+                # If no football-specific table, use the regular approach
                 for table in tables:
-                    if len(table.find_all('tr')) > 5:  # At least a few rows
+                    # Check if this table has match data with team names
+                    if table.select('tr:has(td:contains("vs"))') or table.select('tr:has(td:contains("-"))'):
                         main_table = table
                         break
+                
+                if not main_table:
+                    logger.warning("Could not find the main table with matches")
+                    # Try to find any table that might contain matches
+                    for table in tables:
+                        if len(table.find_all('tr')) > 5:  # At least a few rows
+                            main_table = table
+                            break
             
             if main_table:
                 logger.info("Found the main table with matches")
+                
+                # Log the table headers to help with debugging
+                header_rows = main_table.find_all('tr', class_=lambda c: c and ('header' in str(c).lower() or 'head' in str(c).lower()))
+                if header_rows:
+                    for header_row in header_rows:
+                        header_cells = header_row.find_all(['th', 'td'])
+                        header_texts = [cell.get_text(strip=True) for cell in header_cells]
+                        logger.info(f"Table headers: {header_texts}")
                 
                 # Extract rows
                 rows = main_table.find_all('tr')
@@ -444,6 +485,46 @@ class BetanoMelhorOddScraper:
                         # Check if this is a match row (contains date and teams)
                         cells = row.find_all('td')
                         if len(cells) < 5:
+                            continue
+                        
+                        # Check if this row is for football sport
+                        is_football = False
+                        sport_col_index = None
+                        
+                        # Try to find the Sport column by checking column headers
+                        if not sport_col_index:
+                            header_row = main_table.find('tr', class_=lambda c: c and 'header' in c.lower())
+                            if header_row:
+                                for i, th in enumerate(header_row.find_all('th')):
+                                    if 'sport' in th.get_text().lower() or 'esporte' in th.get_text().lower():
+                                        sport_col_index = i
+                                        break
+                        
+                        # If we found a sport column, check if this is football
+                        if sport_col_index is not None and sport_col_index < len(cells):
+                            sport_text = cells[sport_col_index].get_text(strip=True).lower()
+                            is_football = sport_text in ['futebol', 'football', 'soccer']
+                        else:
+                            # If we can't find a sport column, check the league name or other indicators
+                            for cell in cells:
+                                cell_text = cell.get_text(strip=True).lower()
+                                if cell_text in ['futebol', 'football', 'soccer']:
+                                    is_football = True
+                                    break
+                            
+                            # Default to treating it as football if we can't determine
+                            if not is_football:
+                                # Look at the URL of the row if available
+                                links = row.find_all('a')
+                                for link in links:
+                                    href = link.get('href', '')
+                                    if 'futebol' in href.lower() or 'football' in href.lower() or 'soccer' in href.lower():
+                                        is_football = True
+                                        break
+                        
+                        # Skip non-football matches
+                        if not is_football:
+                            logger.debug(f"Skipping non-football match in row {cells}")
                             continue
                         
                         # Get date/time
