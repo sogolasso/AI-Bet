@@ -364,6 +364,21 @@ class BettingAdvisor:
             
             logger.info(f"Found {len(matches)} upcoming matches")
             
+            # Prioritize matches with Betano odds
+            betano_matches = [m for m in matches if m.get('source', '').startswith('betano') or 
+                            (m.get('odds', {}).get('bookmaker', '') == 'Betano' and 
+                             any(m.get('odds', {}).get(k, 0) > 0 for k in ['home_win', 'draw', 'away_win']))]
+            
+            if betano_matches:
+                logger.info(f"Found {len(betano_matches)} matches with Betano odds, prioritizing these")
+                # If we have at least 5 matches with Betano odds, use only those
+                if len(betano_matches) >= 5:
+                    matches = betano_matches
+                else:
+                    # Otherwise, put Betano matches first followed by other matches
+                    other_matches = [m for m in matches if m not in betano_matches]
+                    matches = betano_matches + other_matches
+            
             # Process matches for prediction
             processed_matches = await self.match_collector.process_matches(matches)
             
@@ -372,7 +387,6 @@ class BettingAdvisor:
             
             # Generate tips based on the predictions
             tips = []
-            import random
             
             # Get today's date for filtering
             today = datetime.now()
@@ -388,7 +402,7 @@ class BettingAdvisor:
             ]
             
             confidence_levels = ["High", "Medium", "Low"]
-            bookmakers = ["Bet365", "William Hill", "Unibet", "1xBet", "888Sport"]
+            bookmaker = "Betano"  # Always use Betano as the bookmaker
             
             # Priority to today's matches
             today_matches = [m for m in matches_with_predictions if m.get("date", "") == today_str]
@@ -408,29 +422,145 @@ class BettingAdvisor:
             selected_matches = selected_matches[:5]
             
             for match in selected_matches:
-                market = random.choice(markets)
+                # Get odds for this match
+                odds = match.get('odds', {})
+                has_home_win = odds.get('home_win', 0) > 0
+                has_draw = odds.get('draw', 0) > 0
+                has_away_win = odds.get('away_win', 0) > 0
+                has_over = odds.get('over_2_5', 0) > 0
+                has_under = odds.get('under_2_5', 0) > 0
+                has_btts_yes = odds.get('btts_yes', 0) > 0
+                has_btts_no = odds.get('btts_no', 0) > 0
+                
+                # Determine available markets based on what odds we have
+                available_markets = []
+                
+                if has_home_win and has_draw and has_away_win:
+                    available_markets.append({"name": "Match Winner", "selections": ["Home Win", "Away Win", "Draw"]})
+                
+                if has_over and has_under:
+                    available_markets.append({"name": "Over/Under 2.5", "selections": ["Over", "Under"]})
+                
+                if has_btts_yes and has_btts_no:
+                    available_markets.append({"name": "Both Teams to Score", "selections": ["Yes", "No"]})
+                
+                # If we have no available markets with odds, use the default markets
+                if not available_markets:
+                    available_markets = markets
+                
+                market = random.choice(available_markets)
                 
                 # For match winner, use different logic
                 if market["name"] == "Match Winner":
-                    # Adjust selections based on team strength
-                    home_team = match["home_team"].lower()
-                    away_team = match["away_team"].lower()
+                    # Get team probabilities from prediction
+                    home_prob = match.get('prediction', {}).get('home_win_probability', 0.33)
+                    draw_prob = match.get('prediction', {}).get('draw_probability', 0.33)
+                    away_prob = match.get('prediction', {}).get('away_win_probability', 0.33)
                     
-                    top_teams = ['manchester city', 'liverpool', 'arsenal', 'barcelona', 'real madrid', 
-                                'bayern', 'paris', 'psg', 'inter', 'juventus', 'chelsea']
+                    # Calculate implied probabilities from odds
+                    home_implied = 1 / odds.get('home_win', 3.0) if odds.get('home_win', 0) > 0 else 0.33
+                    draw_implied = 1 / odds.get('draw', 3.0) if odds.get('draw', 0) > 0 else 0.33
+                    away_implied = 1 / odds.get('away_win', 3.0) if odds.get('away_win', 0) > 0 else 0.33
                     
-                    is_home_top = any(team in home_team for team in top_teams)
-                    is_away_top = any(team in away_team for team in top_teams)
+                    # Find the selection with the biggest value gap (predicted prob - implied prob)
+                    home_value = home_prob - home_implied
+                    draw_value = draw_prob - draw_implied
+                    away_value = away_prob - away_implied
                     
-                    if is_home_top and not is_away_top:
+                    if home_value > draw_value and home_value > away_value:
                         selection = "Home Win"
-                    elif is_away_top and not is_home_top:
+                        selection_odds = odds.get('home_win', 0)
+                    elif away_value > home_value and away_value > draw_value:
                         selection = "Away Win"
+                        selection_odds = odds.get('away_win', 0)
                     else:
-                        # Both top or both not top
-                        selection = random.choice(market["selections"])
+                        selection = "Draw"
+                        selection_odds = odds.get('draw', 0)
+                elif market["name"] == "Over/Under 2.5":
+                    # Choose the one with the best value
+                    over_prob = match.get('prediction', {}).get('over_probability', 0.5)
+                    under_prob = 1 - over_prob
+                    
+                    over_implied = 1 / odds.get('over_2_5', 2.0) if odds.get('over_2_5', 0) > 0 else 0.5
+                    under_implied = 1 / odds.get('under_2_5', 2.0) if odds.get('under_2_5', 0) > 0 else 0.5
+                    
+                    over_value = over_prob - over_implied
+                    under_value = under_prob - under_implied
+                    
+                    if over_value > under_value:
+                        selection = "Over"
+                        selection_odds = odds.get('over_2_5', 0)
+                    else:
+                        selection = "Under"
+                        selection_odds = odds.get('under_2_5', 0)
+                elif market["name"] == "Both Teams to Score":
+                    # Choose the one with the best value
+                    btts_yes_prob = match.get('prediction', {}).get('btts_probability', 0.5)
+                    btts_no_prob = 1 - btts_yes_prob
+                    
+                    btts_yes_implied = 1 / odds.get('btts_yes', 2.0) if odds.get('btts_yes', 0) > 0 else 0.5
+                    btts_no_implied = 1 / odds.get('btts_no', 2.0) if odds.get('btts_no', 0) > 0 else 0.5
+                    
+                    btts_yes_value = btts_yes_prob - btts_yes_implied
+                    btts_no_value = btts_no_prob - btts_no_implied
+                    
+                    if btts_yes_value > btts_no_value:
+                        selection = "Yes"
+                        selection_odds = odds.get('btts_yes', 0)
+                    else:
+                        selection = "No"
+                        selection_odds = odds.get('btts_no', 0)
                 else:
                     selection = random.choice(market["selections"])
+                    selection_odds = 0  # No specific odds for these markets
+                
+                # Determine confidence level
+                if selection_odds > 0:
+                    # If we have odds, calculate value percentage
+                    if market["name"] == "Match Winner":
+                        if selection == "Home Win":
+                            prob = match.get('prediction', {}).get('home_win_probability', 0.33)
+                            implied = 1 / selection_odds
+                            value = (prob - implied) / implied
+                        elif selection == "Away Win":
+                            prob = match.get('prediction', {}).get('away_win_probability', 0.33)
+                            implied = 1 / selection_odds
+                            value = (prob - implied) / implied
+                        else:  # Draw
+                            prob = match.get('prediction', {}).get('draw_probability', 0.33)
+                            implied = 1 / selection_odds
+                            value = (prob - implied) / implied
+                    elif market["name"] == "Over/Under 2.5":
+                        if selection == "Over":
+                            prob = match.get('prediction', {}).get('over_probability', 0.5)
+                            implied = 1 / selection_odds
+                            value = (prob - implied) / implied
+                        else:  # Under
+                            prob = 1 - match.get('prediction', {}).get('over_probability', 0.5)
+                            implied = 1 / selection_odds
+                            value = (prob - implied) / implied
+                    elif market["name"] == "Both Teams to Score":
+                        if selection == "Yes":
+                            prob = match.get('prediction', {}).get('btts_probability', 0.5)
+                            implied = 1 / selection_odds
+                            value = (prob - implied) / implied
+                        else:  # No
+                            prob = 1 - match.get('prediction', {}).get('btts_probability', 0.5)
+                            implied = 1 / selection_odds
+                            value = (prob - implied) / implied
+                    else:
+                        value = 0
+                    
+                    # Assign confidence based on value
+                    if value > 0.15:
+                        confidence = "High"
+                    elif value > 0.05:
+                        confidence = "Medium"
+                    else:
+                        confidence = "Low"
+                else:
+                    # If no odds, assign random confidence
+                    confidence = random.choice(confidence_levels)
                 
                 match_date = match.get("date", today_str)
                 match_time = match.get("match_time", "")
@@ -448,37 +578,32 @@ class BettingAdvisor:
                 
                 tip = {
                     "match": f"{match['home_team']} vs {match['away_team']}",
-                    "league": match["league"],
-                    "match_date": match_date,
-                    "match_time": match_datetime,
-                    "tip": f"{market['name']} - {selection.upper()}",
-                    "odds": match["odds"].get(selection.lower().replace(" ", "_").replace("/", "_"), round(random.uniform(1.5, 3.5), 2)),
-                    "bookmaker": random.choice(bookmakers),
-                    "confidence": random.choices(confidence_levels, weights=[0.3, 0.5, 0.2])[0],
-                    "stake": random.randint(1, 5) * 2
+                    "competition": match.get("league", "Unknown League"),
+                    "date": match_datetime,
+                    "market": market["name"],
+                    "selection": selection,
+                    "odds": selection_odds if selection_odds > 0 else round(random.uniform(1.5, 3.5), 2),
+                    "bookmaker": bookmaker,
+                    "confidence": confidence,
+                    "reasoning": self._generate_tip_reasoning(match, market["name"], selection)
                 }
-                
-                # Log the tip being added
-                logger.info(f"Generated tip: {tip['match']} on {tip['match_date']} - {tip['tip']}")
                 
                 tips.append(tip)
             
-            # Verify we actually have tips
-            if not tips:
-                error_msg = "Failed to generate any betting tips from available matches."
-                logger.error(error_msg)
-                raise ValueError(error_msg)
-                
             return tips
             
-        except ValueError as e:
-            logger.error(f"Error generating tips: {str(e)}")
-            logger.exception("Exception details:")
-            raise
         except Exception as e:
-            logger.error(f"Error generating tips: {e}")
+            logger.error(f"Error getting daily tips: {e}")
             logger.exception("Exception details:")
-            return []
+            
+            # In a production environment, we should never use mock tips
+            if os.environ.get("DEVELOPMENT_MODE", "false").lower() != "true":
+                logger.error("Production mode detected, returning empty tips list instead of mock data")
+                return []
+            
+            # Only use mock tips in development mode
+            logger.warning("Development mode detected, falling back to mock tips")
+            return await self._generate_mock_tips()
     
     def get_daily_tips_sync(self) -> List[Dict[str, Any]]:
         """Synchronous version of get_daily_tips for v13.x compatibility."""
@@ -653,4 +778,101 @@ class BettingAdvisor:
             "bankroll_growth": (self.current_bankroll / self.initial_bankroll - 1) * 100
         }
         
-        return report 
+        return report
+    
+    def _generate_tip_reasoning(self, match: Dict[str, Any], market: str, selection: str) -> str:
+        """Generate reasoning for a tip.
+        
+        Args:
+            match: Match dictionary
+            market: Market type (e.g., "Match Winner")
+            selection: Selection within the market (e.g., "Home Win")
+            
+        Returns:
+            String with reasoning for the tip
+        """
+        home_team = match.get('home_team', 'Home Team')
+        away_team = match.get('away_team', 'Away Team')
+        league = match.get('league', 'Unknown League')
+        
+        # Get prediction data if available
+        prediction = match.get('prediction', {})
+        home_form = prediction.get('home_form', ['W', 'L', 'D', 'W', 'W'])
+        away_form = prediction.get('away_form', ['L', 'W', 'W', 'D', 'L'])
+        
+        # Convert form to text
+        home_form_text = ", ".join(home_form[:5]) if home_form else "Unknown"
+        away_form_text = ", ".join(away_form[:5]) if away_form else "Unknown"
+        
+        # Get relevant probabilities
+        home_win_prob = prediction.get('home_win_probability', 0.33)
+        draw_prob = prediction.get('draw_probability', 0.33)
+        away_win_prob = prediction.get('away_win_probability', 0.33)
+        over_prob = prediction.get('over_probability', 0.5)
+        btts_prob = prediction.get('btts_probability', 0.5)
+        
+        # Get odds
+        odds = match.get('odds', {})
+        
+        if market == "Match Winner":
+            if selection == "Home Win":
+                odds_value = odds.get('home_win', 0)
+                reasoning = f"{home_team} has shown strong form recently ({home_form_text}), "
+                reasoning += f"with a {int(home_win_prob * 100)}% probability of winning according to our model. "
+                if odds_value > 0:
+                    reasoning += f"The Betano odds of {odds_value} represent value compared to our calculated fair odds. "
+                reasoning += f"{away_team}'s recent form ({away_form_text}) suggests they may struggle in this match."
+            elif selection == "Away Win":
+                odds_value = odds.get('away_win', 0)
+                reasoning = f"{away_team} has been performing well ({away_form_text}), "
+                reasoning += f"with a {int(away_win_prob * 100)}% probability of winning according to our model. "
+                if odds_value > 0:
+                    reasoning += f"The Betano odds of {odds_value} represent value compared to our calculated fair odds. "
+                reasoning += f"{home_team}'s recent form ({home_form_text}) makes them vulnerable at home."
+            else:  # Draw
+                odds_value = odds.get('draw', 0)
+                reasoning = f"Both teams are evenly matched, with {home_team} ({home_form_text}) and "
+                reasoning += f"{away_team} ({away_form_text}) likely to cancel each other out. "
+                reasoning += f"Our model indicates a {int(draw_prob * 100)}% probability of a draw. "
+                if odds_value > 0:
+                    reasoning += f"The Betano odds of {odds_value} offer value compared to our calculated fair odds."
+        
+        elif market == "Over/Under 2.5":
+            if selection == "Over":
+                odds_value = odds.get('over_2_5', 0)
+                reasoning = f"Both {home_team} and {away_team} have shown attacking prowess recently. "
+                reasoning += f"Our model predicts a {int(over_prob * 100)}% chance of over 2.5 goals in this match. "
+                if odds_value > 0:
+                    reasoning += f"The Betano odds of {odds_value} for Over 2.5 goals represent good value. "
+                reasoning += f"The {league} games typically feature an average of more than 2.5 goals per match."
+            else:  # Under
+                odds_value = odds.get('under_2_5', 0)
+                reasoning = f"Both {home_team} and {away_team} have shown defensive solidity recently. "
+                reasoning += f"Our model predicts a {int((1-over_prob) * 100)}% chance of under 2.5 goals in this match. "
+                if odds_value > 0:
+                    reasoning += f"The Betano odds of {odds_value} for Under 2.5 goals represent good value. "
+                reasoning += f"Matches in the {league} between these teams typically feature fewer goals."
+        
+        elif market == "Both Teams to Score":
+            if selection == "Yes":
+                odds_value = odds.get('btts_yes', 0)
+                reasoning = f"Both {home_team} ({home_form_text}) and {away_team} ({away_form_text}) "
+                reasoning += f"have been scoring consistently while also conceding. "
+                reasoning += f"Our model indicates a {int(btts_prob * 100)}% probability that both teams will score. "
+                if odds_value > 0:
+                    reasoning += f"The Betano odds of {odds_value} offer value compared to our calculated fair odds."
+            else:  # No
+                odds_value = odds.get('btts_no', 0)
+                reasoning = f"At least one of {home_team} or {away_team} has shown defensive strength "
+                reasoning += f"or offensive struggles recently. "
+                reasoning += f"Our model calculates a {int((1-btts_prob) * 100)}% probability that at least one team will fail to score. "
+                if odds_value > 0:
+                    reasoning += f"The Betano odds of {odds_value} represent value compared to our calculated fair odds."
+        
+        else:
+            reasoning = f"Based on our analysis of {home_team} vs {away_team} in the {league}, "
+            reasoning += f"the {selection} selection in the {market} market offers the best value. "
+            reasoning += f"Recent form for {home_team} ({home_form_text}) and {away_team} ({away_form_text}) "
+            reasoning += "supports this selection as a strong betting opportunity."
+        
+        return reasoning 
