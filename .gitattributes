@@ -1,0 +1,8 @@
+# Set default behavior to automatically normalize line endings
+* text=auto
+
+# Force bash scripts to use LF
+*.sh text eol=lf
+run_production.py text eol=lf
+run_daily_production.py text eol=lf
+*.py text eol=lf 

@@ -8,93 +8,70 @@ It's a convenience wrapper around the all_in_one.py script.
 
 import sys
 import os
+import time
+import asyncio
 import subprocess
-import platform
 from pathlib import Path
+from dotenv import load_dotenv
 
-def check_environment():
-    """Check if the environment is properly set up."""
+def ensure_directories_exist():
+    """Ensure all required directories exist."""
+    Path("logs").mkdir(exist_ok=True)
+    Path("data").mkdir(exist_ok=True)
+    Path("data/production").mkdir(exist_ok=True)
+
+def main():
+    """Main entry point for the production mode launcher."""
     # Load environment variables
-    try:
-        from dotenv import load_dotenv
-        load_dotenv(override=True)
-        print("✅ Environment variables loaded from .env file")
-    except ImportError:
-        print("⚠️ Warning: python-dotenv is not installed. Environment variables may not be loaded correctly.")
-        print("   Run 'pip install python-dotenv' to install it.")
+    load_dotenv(override=True)
+    print("✅ Environment variables loaded from .env file")
     
-    # Check for Telegram bot token
+    # Check for Telegram token
     token = os.environ.get('TELEGRAM_BOT_TOKEN')
     if not token:
-        print("❌ Error: TELEGRAM_BOT_TOKEN environment variable is not set.")
-        print("   Please add it to your .env file or set it in your environment.")
-        print("   Example: TELEGRAM_BOT_TOKEN=1234567890:ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghi")
-        return False
-    else:
-        print(f"✅ Found Telegram bot token: {token[:5]}...")
+        print("❌ No Telegram bot token found. Please set TELEGRAM_BOT_TOKEN in .env")
+        sys.exit(1)
+    print(f"✅ Found Telegram bot token: {token[:5]}...")
     
     # Check for admin IDs
     admin_ids = os.environ.get('TELEGRAM_ADMIN_IDS')
     if not admin_ids:
-        print("⚠️ Warning: TELEGRAM_ADMIN_IDS environment variable is not set.")
-        print("   Production mode updates will not be sent to any users.")
-        print("   Example: TELEGRAM_ADMIN_IDS=123456789,987654321")
-        print("   Run the get_telegram_id.py script to get your Telegram user ID.")
-    else:
-        try:
-            # Parse admin IDs - handle various formats
-            admin_ids = admin_ids.strip('[]')
-            admin_id_list = [id.strip() for id in admin_ids.split(',')]
-            valid_ids = [int(id) for id in admin_id_list if id.strip().isdigit()]
-            
-            if valid_ids:
-                print(f"✅ Found valid admin IDs: {valid_ids}")
-            else:
-                print("⚠️ Warning: TELEGRAM_ADMIN_IDS environment variable does not contain valid IDs.")
-        except Exception as e:
-            print(f"⚠️ Warning: Error parsing admin IDs: {e}")
+        print("❌ No Telegram admin IDs found. Please set TELEGRAM_ADMIN_IDS in .env")
+        sys.exit(1)
     
-    # Check required directories
-    Path("logs").mkdir(exist_ok=True)
-    Path("data").mkdir(exist_ok=True)
-    
-    return True
-
-def main():
-    """Launch all_in_one.py in production mode."""
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    all_in_one_path = os.path.join(script_dir, "all_in_one.py")
-    
-    # Make sure all_in_one.py exists
-    if not os.path.exists(all_in_one_path):
-        print("Error: all_in_one.py not found. Make sure it exists in the same directory.")
-        return 1
-    
-    # Check environment before running
-    if not check_environment():
-        return 1
-    
-    # Make script executable on Unix systems
-    if platform.system() != "Windows":
-        try:
-            os.chmod(all_in_one_path, 0o755)
-        except:
-            pass
-    
-    # Pass through any command-line arguments
-    args = ["--production"] + sys.argv[1:]
-    
-    print("\n🚀 Launching production mode...\n")
-    
-    # Execute all_in_one.py with the production argument
     try:
-        if platform.system() == "Windows":
-            return subprocess.call([sys.executable, all_in_one_path] + args)
-        else:
-            return subprocess.call([all_in_one_path] + args)
+        admin_id_list = [int(x.strip()) for x in admin_ids.split(',')]
+        print(f"✅ Found valid admin IDs: {admin_id_list}")
+    except ValueError:
+        print("❌ Invalid admin IDs format. Please use comma-separated numbers")
+        sys.exit(1)
+    
+    # Create required directories
+    ensure_directories_exist()
+    
+    print("🚀 Launching production mode...")
+    
+    # Check if all_in_one.py exists
+    if not os.path.exists("all_in_one.py"):
+        print("❌ all_in_one.py not found in current directory")
+        sys.exit(1)
+    
+    try:
+        # Import and run the production mode
+        from production_mode import ProductionMode
+        
+        async def run_production():
+            production = ProductionMode()
+            await production.run()
+            
+        asyncio.run(run_production())
+    except KeyboardInterrupt:
+        print("\n⏹️ Production mode stopped by user")
     except Exception as e:
-        print(f"Error launching production mode: {e}")
-        return 1
+        print(f"❌ Error in production mode: {e}")
+        import traceback
+        traceback.print_exc()
+        sys.exit(1)
 
 if __name__ == "__main__":
-    sys.exit(main()) 
+    main() 
