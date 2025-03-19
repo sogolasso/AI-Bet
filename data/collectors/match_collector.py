@@ -70,80 +70,68 @@ class MatchCollector:
         return self.sources
     
     async def get_upcoming_matches(self) -> List[Dict[str, Any]]:
-        """Get upcoming matches for the configured days ahead."""
-        logger.info(f"Fetching upcoming matches for next {self.days_ahead} days")
+        """Get upcoming matches for the next week.
         
-        # Check cache first
-        cache_file = self.cache_dir / f"upcoming_matches_{self.days_ahead}.json"
-        if cache_file.exists():
-            cache_time = datetime.fromtimestamp(cache_file.stat().st_mtime)
-            # Make the cache last only 5 minutes to ensure fresher data during development
-            if datetime.now() - cache_time < timedelta(minutes=5):  # Cache valid for 5 minutes
-                logger.info("Using cached upcoming matches")
-                with open(cache_file, 'r') as f:
-                    cached_data = json.load(f)
-                    if cached_data and len(cached_data) > 0:
-                        logger.info(f"Loaded {len(cached_data)} matches from cache")
-                        return cached_data
-                    else:
-                        logger.warning("Cache exists but contains no matches, will fetch fresh data")
+        Returns:
+            List of dictionaries containing match information.
+        """
+        logger.info("Getting upcoming matches...")
         
-        # Try to get real match data from Betano first (our primary source)
-        matches = []
+        # Check if we have cached matches and they're still valid
+        if self.cached_matches and (datetime.now() - self.cached_time).total_seconds() < self.cache_duration:
+            logger.info(f"Using cached matches ({len(self.cached_matches)} matches, cached {(datetime.now() - self.cached_time).total_seconds()/60:.1f} minutes ago)")
+            return self.cached_matches
         
-        # First try Betano Portugal (our primary source)
-        logger.info("Attempting to fetch matches from Betano Portugal...")
+        # List to store all matches from different sources
+        all_matches = []
+        
+        # First try to scrape from Betano
+        logger.info("Attempting to scrape matches from Betano...")
         try:
-            matches = self._scrape_betano_matches()
-            if matches:
-                logger.info(f"Successfully fetched {len(matches)} matches from Betano Portugal")
+            betano_matches = self._scrape_betano_matches()
+            if betano_matches:
+                logger.info(f"Successfully scraped {len(betano_matches)} matches from Betano")
+                all_matches.extend(betano_matches)
         except Exception as e:
-            logger.error(f"Error fetching from Betano Portugal: {e}")
+            logger.error(f"Error scraping from Betano: {e}")
             logger.exception("Exception details:")
         
-        # If Betano didn't return matches, try Fotmob as backup
-        if not matches:
-            logger.info("No matches from Betano Portugal, attempting to fetch from Fotmob...")
-            try:
-                matches = self._fetch_fotmob_matches()
-                if matches:
-                    logger.info(f"Successfully fetched {len(matches)} matches from Fotmob")
-            except Exception as e:
-                logger.error(f"Error fetching from Fotmob: {e}")
-                logger.exception("Exception details:")
+        # If Betano scraping provided matches, use those
+        if all_matches:
+            logger.info(f"Using {len(all_matches)} matches from Betano")
+            self.cached_matches = all_matches
+            self.cached_time = datetime.now()
+            return all_matches
         
-        # If Fotmob didn't return matches, try Livescore as backup
-        if not matches:
-            logger.info("No matches from Fotmob, attempting to fetch from Livescore...")
-            try:
-                matches = self._fetch_livescore_matches()
-                if matches:
-                    logger.info(f"Successfully fetched {len(matches)} matches from Livescore")
-            except Exception as e:
-                logger.error(f"Error fetching from Livescore: {e}")
-                logger.exception("Exception details:")
+        # If Betano failed, try Football-Data.org API
+        try:
+            logger.info("Betano scraping failed, trying Football-Data.org API...")
+            football_data_matches = await self._fetch_football_data_matches()
+            if football_data_matches:
+                logger.info(f"Successfully fetched {len(football_data_matches)} matches from Football-Data.org")
+                all_matches.extend(football_data_matches)
+        except Exception as e:
+            logger.error(f"Error fetching from Football-Data.org: {e}")
+            logger.exception("Exception details:")
         
-        # If we have matches, cache them
-        if matches:
-            logger.info(f"Successfully fetched {len(matches)} real matches, caching results")
-            try:
-                with open(cache_file, 'w') as f:
-                    json.dump(matches, f, indent=2)
-            except Exception as e:
-                logger.error(f"Error caching match data: {e}")
+        # If we have matches from any source, use those
+        if all_matches:
+            logger.info(f"Using {len(all_matches)} matches from available sources")
+            self.cached_matches = all_matches
+            self.cached_time = datetime.now()
+            return all_matches
+            
+        # If we're in development mode and all real sources failed, use mock data as last resort
+        if os.environ.get("DEVELOPMENT_MODE", "false").lower() == "true":
+            logger.warning("All real data sources failed, falling back to mock data (DEVELOPMENT_MODE=true)")
+            mock_matches = self._generate_mock_upcoming_matches()
+            self.cached_matches = mock_matches
+            self.cached_time = datetime.now()
+            return mock_matches
         else:
-            # No matches found
-            if self.is_development:
-                logger.warning("WARNING: Could not fetch any real match data from any source. Falling back to mock data ONLY because DEVELOPMENT_MODE=true.")
-                logger.warning("This should NOT happen in production! Fix the data fetching before deploying.")
-                matches = self._generate_mock_upcoming_matches()
-                logger.info(f"Generated {len(matches)} mock matches for development ONLY")
-            else:
-                # In production, clearly error out
-                logger.error("CRITICAL: Could not fetch any real match data from any source")
-                logger.error("This advisor only works with real match data. Please check your internet connection and try again.")
-        
-        return matches
+            # In production, return an empty list if all sources failed
+            logger.error("All data sources failed and DEVELOPMENT_MODE=false, returning empty list")
+            return []
     
     def _generate_mock_upcoming_matches(self) -> List[Dict[str, Any]]:
         """Generate mock upcoming matches for DEVELOPMENT ONLY."""
@@ -245,41 +233,9 @@ class MatchCollector:
             'Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:120.0) Gecko/20100101 Firefox/120.0'
         ]
         
-        # Create a session for persistent cookies
-        session = requests.Session()
-        session.headers.update({
-            'User-Agent': random.choice(user_agents),
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
-            'Accept-Language': 'en-US,en;q=0.5',
-            'Accept-Encoding': 'gzip, deflate, br',
-            'Connection': 'keep-alive',
-            'Upgrade-Insecure-Requests': '1',
-            'Cache-Control': 'max-age=0',
-            'Sec-Fetch-Dest': 'document',
-            'Sec-Fetch-Mode': 'navigate',
-            'Sec-Fetch-Site': 'none',
-            'Sec-Fetch-User': '?1',
-            'Referer': 'https://www.google.com/'
-        })
-        
-        # Pages to scrape (upcoming days)
-        days_to_scrape = min(self.days_ahead + 1, 3)  # Limit to 3 days to avoid excessive scraping
-        
-        # URLs to scrape for football matches - try multiple bookmakers
-        urls = [
-            # Betano Portugal
-            'https://www.betano.pt/sport/futebol/jogos-de-hoje/',
-            'https://www.betano.pt/sport/futebol/jogos-de-amanha/',
-            # Betway Portugal
-            'https://www.betway.pt/sport/futebol',
-            # 1xBet Portugal
-            'https://1xbet.pt/pt/line/football'
-        ]
-        
-        match_count = 0
-        
-        # Try specific match data for testing - use this to generate examples if scraping fails
+        # Try specific match data for development and testing
         use_example_data = True
+        logger.warning("Using example match data until we can solve the web scraping challenges with Betano")
         if use_example_data:
             # Get today and tomorrow's dates
             today = now.strftime("%Y-%m-%d")
@@ -389,187 +345,230 @@ class MatchCollector:
             
             # Return the example matches
             return example_matches
-        
-        # Process each URL for real scraping
-        for url_index, url in enumerate(urls):
-            if url_index >= days_to_scrape and "betano" in url:
-                # Skip additional Betano URLs if we've reached the days limit
-                continue
-                
-            logger.info(f"Scraping URL: {url}")
             
-            try:
+        # For real scraping, use the code below
+        try:
+            # Create a session for persistent cookies
+            session = requests.Session()
+            
+            # Set advanced headers to mimic a real browser
+            chosen_user_agent = random.choice(user_agents)
+            session.headers.update({
+                'User-Agent': chosen_user_agent,
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
+                'Accept-Language': 'en-US,en;q=0.9,pt-PT;q=0.8,pt;q=0.7',
+                'Accept-Encoding': 'gzip, deflate, br',
+                'Connection': 'keep-alive',
+                'Upgrade-Insecure-Requests': '1',
+                'Sec-Fetch-Dest': 'document',
+                'Sec-Fetch-Mode': 'navigate',
+                'Sec-Fetch-Site': 'none',
+                'Sec-Fetch-User': '?1',
+                'Sec-Ch-Ua': '"Google Chrome";v="119", "Chromium";v="119", "Not?A_Brand";v="24"',
+                'Sec-Ch-Ua-Mobile': '?0',
+                'Sec-Ch-Ua-Platform': '"Windows"',
+                'Referer': 'https://www.google.com/',
+                'Cache-Control': 'max-age=0'
+            })
+            
+            # URLs to scrape for football matches
+            urls = [
+                # Betano Portugal
+                'https://www.betano.pt/sport/futebol/jogos-de-hoje/',
+                'https://www.betano.pt/sport/futebol/jogos-de-amanha/'
+            ]
+            
+            # Pages to scrape (upcoming days)
+            days_to_scrape = min(self.days_ahead + 1, 3)  # Limit to 3 days to avoid excessive scraping
+            
+            match_count = 0
+            
+            # Process each URL with retry logic
+            for url_index, url in enumerate(urls):
+                if url_index >= days_to_scrape:
+                    # Skip URLs beyond the days we want to scrape
+                    break
+                    
+                logger.info(f"Scraping URL: {url}")
+                
                 # Add a random delay between requests to avoid detection
-                time.sleep(random.uniform(1, 3))
+                time.sleep(random.uniform(2, 5))
                 
-                # Get the page content
-                response = session.get(url, timeout=15)
+                # Try up to 3 times with different user agents
+                max_retries = 3
+                retry_count = 0
+                success = False
                 
-                if response.status_code != 200:
-                    logger.error(f"Failed to fetch data, status code: {response.status_code}")
+                while retry_count < max_retries and not success:
+                    try:
+                        # Rotate user agent on retry
+                        if retry_count > 0:
+                            new_user_agent = random.choice(user_agents)
+                            logger.info(f"Retrying with new user agent: {new_user_agent[:20]}...")
+                            session.headers.update({'User-Agent': new_user_agent})
+                            # Add longer delay on retry
+                            time.sleep(random.uniform(3, 7))
+                        
+                        # Get the page content
+                        response = session.get(url, timeout=30)
+                        
+                        if response.status_code == 200:
+                            success = True
+                            logger.info(f"Successfully fetched page with status code 200")
+                        else:
+                            logger.warning(f"Failed to fetch data, status code: {response.status_code}, retry {retry_count + 1}/{max_retries}")
+                            retry_count += 1
+                    except Exception as e:
+                        logger.warning(f"Error during request: {e}, retry {retry_count + 1}/{max_retries}")
+                        retry_count += 1
+                
+                if not success:
+                    logger.error(f"Failed to fetch data after {max_retries} retries, skipping URL")
                     continue
-                
-                # Save the HTML to a file for debugging if needed
-                with open(f"page_debug_{url_index}.html", "w", encoding="utf-8") as f:
-                    f.write(response.text)
-                logger.info(f"Saved HTML to page_debug_{url_index}.html for analysis")
                 
                 # Parse the HTML content
                 soup = BeautifulSoup(response.content, 'html.parser')
                 
-                # Check which site we're scraping - use different selectors for each site
-                if "betano" in url:
-                    # Betano selectors
-                    league_containers = soup.select('div.events-list__grid')
-                    
+                # Debug - save HTML for analysis
+                with open(f"betano_debug_{url_index}.html", "w", encoding="utf-8") as f:
+                    f.write(response.text)
+                logger.info(f"Saved HTML to betano_debug_{url_index}.html for analysis")
+                
+                # Find all league containers
+                league_containers = soup.select('div.events-list__grid')
+                
+                if not league_containers:
+                    logger.warning(f"No league containers found on {url}")
+                    # Try alternative selectors
+                    league_containers = soup.select('div.events-list__container')
                     if not league_containers:
-                        logger.warning(f"No league containers found on {url}")
-                        # Try alternative selectors
-                        league_containers = soup.select('div.events-list__container')
-                        if not league_containers:
-                            logger.warning("Alternative selector also failed")
-                            continue
+                        logger.warning("Alternative selector also failed")
+                        continue
+                
+                logger.info(f"Found {len(league_containers)} league containers on {url}")
+                
+                # Determine the date for this URL
+                target_date = now + timedelta(days=url_index)
+                date_str = target_date.strftime("%Y-%m-%d")
+                
+                # Process each league container
+                for league_container in league_containers:
+                    # Get the league name
+                    league_header = league_container.find_previous('div', class_='events-list__title')
+                    league_name = "Unknown League"
+                    if league_header:
+                        league_name_elem = league_header.select_one('h2.events-list__title__label')
+                        if league_name_elem:
+                            league_name = league_name_elem.text.strip()
                     
-                    logger.info(f"Found {len(league_containers)} league containers on {url}")
+                    # Find all events (matches) in this league
+                    events = league_container.select('div.event')
                     
-                    # Determine the date for this URL
-                    target_date = now + timedelta(days=url_index if url_index < 2 else url_index-1)
-                    date_str = target_date.strftime("%Y-%m-%d")
+                    if not events:
+                        logger.warning(f"No events found in league container for {league_name}")
+                        continue
                     
-                    # Process each league container
-                    for league_container in league_containers:
-                        # Get the league name
-                        league_header = league_container.find_previous('div', class_='events-list__title')
-                        league_name = "Unknown League"
-                        if league_header:
-                            league_name_elem = league_header.select_one('h2.events-list__title__label')
-                            if league_name_elem:
-                                league_name = league_name_elem.text.strip()
-                        
-                        # Find all events (matches) in this league
-                        events = league_container.select('div.event')
-                        
-                        if not events:
-                            logger.warning(f"No events found in league container for {league_name}")
-                            continue
-                        
-                        logger.info(f"Found {len(events)} events in {league_name}")
-                        
-                        # Process each event
-                        for event in events:
+                    logger.info(f"Found {len(events)} events in {league_name}")
+                    
+                    # Process each event
+                    for event in events:
+                        try:
+                            # Get match time
+                            time_elem = event.select_one('div.starting-time')
+                            match_time_str = time_elem.text.strip() if time_elem else "00:00"
+                            logger.debug(f"Match time string: {match_time_str}")
+                            
+                            # Parse hour and minute
                             try:
-                                # Get match time
-                                time_elem = event.select_one('div.starting-time')
-                                match_time_str = time_elem.text.strip() if time_elem else "00:00"
-                                logger.debug(f"Match time string: {match_time_str}")
-                                
-                                # Parse hour and minute
-                                try:
-                                    hour, minute = map(int, match_time_str.split(':'))
-                                    match_time = target_date.replace(hour=hour, minute=minute, second=0)
-                                except (ValueError, TypeError) as e:
-                                    logger.warning(f"Failed to parse match time: {e}")
-                                    # Default time if parsing fails
-                                    match_time = target_date.replace(hour=15, minute=0, second=0)
-                                
-                                # Skip matches that have already started
-                                if match_time < now:
-                                    logger.debug(f"Skipping past match with time {match_time}")
-                                    continue
-                                
-                                # Get teams
-                                teams_container = event.select_one('div.event-description')
-                                if not teams_container:
-                                    logger.warning("No teams container found")
-                                    continue
-                                
-                                # Debug teams container
-                                logger.debug(f"Teams container HTML: {teams_container}")
-                                
-                                team_elems = teams_container.select('span.participants-pair-participant')
-                                
-                                if len(team_elems) < 2:
-                                    logger.warning(f"Not enough team elements found: {len(team_elems)}")
-                                    # Try alternative selectors
-                                    team_elems = teams_container.select('div.event-description__name')
-                                    if len(team_elems) < 2:
-                                        logger.warning("Alternative team selector also failed")
-                                        continue
-                                
-                                home_team = team_elems[0].text.strip()
-                                away_team = team_elems[1].text.strip()
-                                
-                                # Get odds
-                                odds_container = event.select('div.selections-selections')
-                                
-                                # Initialize odds object
-                                odds = {
-                                    "home_win": 0,
-                                    "draw": 0,
-                                    "away_win": 0,
-                                    "over_2_5": 0,
-                                    "under_2_5": 0,
-                                    "btts_yes": 0,
-                                    "btts_no": 0
-                                }
-                                
-                                # Process 1X2 odds (match winner)
-                                if odds_container and len(odds_container) > 0:
-                                    odds_elems = odds_container[0].select('div.selection')
-                                    
-                                    if len(odds_elems) >= 3:
-                                        # Parse 1X2 odds
-                                        try:
-                                            home_odds_elem = odds_elems[0].select_one('span.selection-price')
-                                            draw_odds_elem = odds_elems[1].select_one('span.selection-price')
-                                            away_odds_elem = odds_elems[2].select_one('span.selection-price')
-                                            
-                                            if home_odds_elem:
-                                                odds["home_win"] = float(home_odds_elem.text.strip().replace(',', '.'))
-                                            if draw_odds_elem:
-                                                odds["draw"] = float(draw_odds_elem.text.strip().replace(',', '.'))
-                                            if away_odds_elem:
-                                                odds["away_win"] = float(away_odds_elem.text.strip().replace(',', '.'))
-                                        except (ValueError, AttributeError) as e:
-                                            logger.warning(f"Error parsing 1X2 odds: {e}")
-                                
-                                # Create match object
-                                match_data = {
-                                    "id": f"betano_{match_count}",
-                                    "home_team": home_team,
-                                    "away_team": away_team,
-                                    "league": league_name,
-                                    "match_time": match_time.isoformat(),
-                                    "date": date_str,
-                                    "venue": f"{home_team} Stadium",
-                                    "odds": odds,
-                                    "source": "betano"
-                                }
-                                
-                                match_count += 1
-                                
-                                logger.info(f"Found match: {home_team} vs {away_team} on {date_str} at {match_time.strftime('%H:%M')} with odds 1X2: {odds['home_win']}/{odds['draw']}/{odds['away_win']}")
-                                matches.append(match_data)
-                            except Exception as e:
-                                logger.warning(f"Error processing match: {e}")
+                                hour, minute = map(int, match_time_str.split(':'))
+                                match_time = target_date.replace(hour=hour, minute=minute, second=0)
+                            except (ValueError, TypeError) as e:
+                                logger.warning(f"Failed to parse match time: {e}")
+                                # Default time if parsing fails
+                                match_time = target_date.replace(hour=15, minute=0, second=0)
+                            
+                            # Skip matches that have already started
+                            if match_time < now:
+                                logger.debug(f"Skipping past match with time {match_time}")
                                 continue
+                            
+                            # Get teams
+                            teams_container = event.select_one('div.event-description')
+                            if not teams_container:
+                                logger.warning("No teams container found")
+                                continue
+                            
+                            team_elems = teams_container.select('span.participants-pair-participant')
+                            
+                            if len(team_elems) < 2:
+                                logger.warning(f"Not enough team elements found: {len(team_elems)}")
+                                # Try alternative selectors
+                                team_elems = teams_container.select('div.event-description__name')
+                                if len(team_elems) < 2:
+                                    logger.warning("Alternative team selector also failed")
+                                    continue
+                            
+                            home_team = team_elems[0].text.strip()
+                            away_team = team_elems[1].text.strip()
+                            
+                            # Get odds
+                            odds_container = event.select('div.selections-selections')
+                            
+                            # Initialize odds object
+                            odds = {
+                                "home_win": 0,
+                                "draw": 0,
+                                "away_win": 0,
+                                "over_2_5": 0,
+                                "under_2_5": 0,
+                                "btts_yes": 0,
+                                "btts_no": 0
+                            }
+                            
+                            # Process 1X2 odds (match winner)
+                            if odds_container and len(odds_container) > 0:
+                                odds_elems = odds_container[0].select('div.selection')
                                 
-                elif "betway" in url:
-                    # Betway scraping logic
-                    logger.info("Scraping Betway Portugal")
-                    # Implementation for Betway would go here
-                    pass
-                    
-                elif "1xbet" in url:
-                    # 1xBet scraping logic
-                    logger.info("Scraping 1xBet Portugal")
-                    # Implementation for 1xBet would go here
-                    pass
+                                if len(odds_elems) >= 3:
+                                    # Parse 1X2 odds
+                                    try:
+                                        home_odds_elem = odds_elems[0].select_one('span.selection-price')
+                                        draw_odds_elem = odds_elems[1].select_one('span.selection-price')
+                                        away_odds_elem = odds_elems[2].select_one('span.selection-price')
+                                        
+                                        if home_odds_elem:
+                                            odds["home_win"] = float(home_odds_elem.text.strip().replace(',', '.'))
+                                        if draw_odds_elem:
+                                            odds["draw"] = float(draw_odds_elem.text.strip().replace(',', '.'))
+                                        if away_odds_elem:
+                                            odds["away_win"] = float(away_odds_elem.text.strip().replace(',', '.'))
+                                    except (ValueError, AttributeError) as e:
+                                        logger.warning(f"Error parsing 1X2 odds: {e}")
+                            
+                            # Create match object
+                            match_data = {
+                                "id": f"betano_{match_count}",
+                                "home_team": home_team,
+                                "away_team": away_team,
+                                "league": league_name,
+                                "match_time": match_time.isoformat(),
+                                "date": date_str,
+                                "venue": f"{home_team} Stadium",
+                                "odds": odds,
+                                "source": "betano"
+                            }
+                            
+                            match_count += 1
+                            
+                            logger.info(f"Found match: {home_team} vs {away_team} on {date_str} at {match_time.strftime('%H:%M')} with odds 1X2: {odds['home_win']}/{odds['draw']}/{odds['away_win']}")
+                            matches.append(match_data)
+                        except Exception as e:
+                            logger.warning(f"Error processing match: {e}")
+                            continue
+        except Exception as e:
+            logger.error(f"Error scraping Betano: {e}")
+            logger.exception("Exception details:")
             
-            except Exception as e:
-                logger.error(f"Error scraping URL {url}: {e}")
-                logger.exception("Exception details:")
-        
         logger.info(f"Scraping complete. Found {len(matches)} matches.")
         return matches
     
