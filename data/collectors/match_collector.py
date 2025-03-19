@@ -233,119 +233,9 @@ class MatchCollector:
             'Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:120.0) Gecko/20100101 Firefox/120.0'
         ]
         
-        # Try specific match data for development and testing
-        use_example_data = True
-        logger.warning("Using example match data until we can solve the web scraping challenges with Betano")
-        if use_example_data:
-            # Get today and tomorrow's dates
-            today = now.strftime("%Y-%m-%d")
-            tomorrow = (now + timedelta(days=1)).strftime("%Y-%m-%d")
-            
-            # Create some example matches with realistic odds
-            example_matches = [
-                {
-                    "id": "betano_0",
-                    "home_team": "Sporting CP",
-                    "away_team": "FC Porto",
-                    "league": "Primeira Liga",
-                    "match_time": now.replace(hour=20, minute=0, second=0).isoformat(),
-                    "date": today,
-                    "venue": "Estádio José Alvalade",
-                    "odds": {
-                        "home_win": 2.15,
-                        "draw": 3.25,
-                        "away_win": 3.40,
-                        "over_2_5": 1.95,
-                        "under_2_5": 1.85,
-                        "btts_yes": 1.80,
-                        "btts_no": 1.90
-                    },
-                    "source": "betano"
-                },
-                {
-                    "id": "betano_1",
-                    "home_team": "Benfica",
-                    "away_team": "Braga",
-                    "league": "Primeira Liga",
-                    "match_time": now.replace(hour=21, minute=15, second=0).isoformat(),
-                    "date": today,
-                    "venue": "Estádio da Luz",
-                    "odds": {
-                        "home_win": 1.70,
-                        "draw": 3.75,
-                        "away_win": 4.50,
-                        "over_2_5": 1.75,
-                        "under_2_5": 2.05,
-                        "btts_yes": 1.75,
-                        "btts_no": 1.95
-                    },
-                    "source": "betano"
-                },
-                {
-                    "id": "betano_2",
-                    "home_team": "Barcelona",
-                    "away_team": "Real Madrid",
-                    "league": "La Liga",
-                    "match_time": (now + timedelta(days=1)).replace(hour=20, minute=0, second=0).isoformat(),
-                    "date": tomorrow,
-                    "venue": "Camp Nou",
-                    "odds": {
-                        "home_win": 1.90,
-                        "draw": 3.60,
-                        "away_win": 3.80,
-                        "over_2_5": 1.65,
-                        "under_2_5": 2.25,
-                        "btts_yes": 1.60,
-                        "btts_no": 2.30
-                    },
-                    "source": "betano"
-                },
-                {
-                    "id": "betano_3",
-                    "home_team": "Manchester City",
-                    "away_team": "Liverpool",
-                    "league": "Premier League",
-                    "match_time": (now + timedelta(days=1)).replace(hour=16, minute=30, second=0).isoformat(),
-                    "date": tomorrow,
-                    "venue": "Etihad Stadium",
-                    "odds": {
-                        "home_win": 1.75,
-                        "draw": 3.80,
-                        "away_win": 4.20,
-                        "over_2_5": 1.60,
-                        "under_2_5": 2.35,
-                        "btts_yes": 1.55,
-                        "btts_no": 2.40
-                    },
-                    "source": "betano"
-                },
-                {
-                    "id": "betano_4",
-                    "home_team": "Bayern Munich",
-                    "away_team": "Borussia Dortmund",
-                    "league": "Bundesliga",
-                    "match_time": (now + timedelta(days=2)).replace(hour=18, minute=30, second=0).isoformat(),
-                    "date": (now + timedelta(days=2)).strftime("%Y-%m-%d"),
-                    "venue": "Allianz Arena",
-                    "odds": {
-                        "home_win": 1.50,
-                        "draw": 4.50,
-                        "away_win": 5.00,
-                        "over_2_5": 1.45,
-                        "under_2_5": 2.75,
-                        "btts_yes": 1.50,
-                        "btts_no": 2.50
-                    },
-                    "source": "betano"
-                }
-            ]
-            
-            # Log the example matches
-            logger.info(f"Using example match data for development - {len(example_matches)} matches")
-            
-            # Return the example matches
-            return example_matches
-            
+        # Use real scraping data only, no fallback to examples
+        use_example_data = False
+        
         # For real scraping, use the code below
         try:
             # Create a session for persistent cookies
@@ -368,14 +258,18 @@ class MatchCollector:
                 'Sec-Ch-Ua-Mobile': '?0',
                 'Sec-Ch-Ua-Platform': '"Windows"',
                 'Referer': 'https://www.google.com/',
-                'Cache-Control': 'max-age=0'
+                'Cache-Control': 'max-age=0',
+                'DNT': '1'
             })
             
-            # URLs to scrape for football matches
+            # Try alternative sites for football matches and odds
             urls = [
-                # Betano Portugal
+                # Main Betano Portugal URL
                 'https://www.betano.pt/sport/futebol/jogos-de-hoje/',
-                'https://www.betano.pt/sport/futebol/jogos-de-amanha/'
+                'https://www.betano.pt/sport/futebol/jogos-de-amanha/',
+                # Alternative sources
+                'https://www.zerozero.pt/fixtures.php',
+                'https://www.sofascore.com/tournament/football/portugal/primeira-liga/238'
             ]
             
             # Pages to scrape (upcoming days)
@@ -385,9 +279,9 @@ class MatchCollector:
             
             # Process each URL with retry logic
             for url_index, url in enumerate(urls):
-                if url_index >= days_to_scrape:
-                    # Skip URLs beyond the days we want to scrape
-                    break
+                if url_index >= days_to_scrape and "betano.pt" in url:
+                    # Skip additional Betano URLs if we've reached the days limit
+                    continue
                     
                 logger.info(f"Scraping URL: {url}")
                 
@@ -409,8 +303,20 @@ class MatchCollector:
                             # Add longer delay on retry
                             time.sleep(random.uniform(3, 7))
                         
+                        # Use a proxy if available (helpful to bypass IP blocking)
+                        proxies = None
+                        if os.environ.get("HTTP_PROXY"):
+                            proxies = {
+                                "http": os.environ.get("HTTP_PROXY"),
+                                "https": os.environ.get("HTTPS_PROXY") or os.environ.get("HTTP_PROXY")
+                            }
+                            logger.info(f"Using proxy: {proxies['http']}")
+                            
                         # Get the page content
-                        response = session.get(url, timeout=30)
+                        if proxies:
+                            response = session.get(url, timeout=30, proxies=proxies)
+                        else:
+                            response = session.get(url, timeout=30)
                         
                         if response.status_code == 200:
                             success = True
@@ -429,147 +335,286 @@ class MatchCollector:
                 # Parse the HTML content
                 soup = BeautifulSoup(response.content, 'html.parser')
                 
-                # Debug - save HTML for analysis
-                with open(f"betano_debug_{url_index}.html", "w", encoding="utf-8") as f:
-                    f.write(response.text)
-                logger.info(f"Saved HTML to betano_debug_{url_index}.html for analysis")
-                
-                # Find all league containers
-                league_containers = soup.select('div.events-list__grid')
-                
-                if not league_containers:
-                    logger.warning(f"No league containers found on {url}")
-                    # Try alternative selectors
-                    league_containers = soup.select('div.events-list__container')
-                    if not league_containers:
-                        logger.warning("Alternative selector also failed")
-                        continue
-                
-                logger.info(f"Found {len(league_containers)} league containers on {url}")
-                
-                # Determine the date for this URL
-                target_date = now + timedelta(days=url_index)
-                date_str = target_date.strftime("%Y-%m-%d")
-                
-                # Process each league container
-                for league_container in league_containers:
-                    # Get the league name
-                    league_header = league_container.find_previous('div', class_='events-list__title')
-                    league_name = "Unknown League"
-                    if league_header:
-                        league_name_elem = league_header.select_one('h2.events-list__title__label')
-                        if league_name_elem:
-                            league_name = league_name_elem.text.strip()
-                    
-                    # Find all events (matches) in this league
-                    events = league_container.select('div.event')
-                    
-                    if not events:
-                        logger.warning(f"No events found in league container for {league_name}")
-                        continue
-                    
-                    logger.info(f"Found {len(events)} events in {league_name}")
-                    
-                    # Process each event
-                    for event in events:
-                        try:
-                            # Get match time
-                            time_elem = event.select_one('div.starting-time')
-                            match_time_str = time_elem.text.strip() if time_elem else "00:00"
-                            logger.debug(f"Match time string: {match_time_str}")
-                            
-                            # Parse hour and minute
-                            try:
-                                hour, minute = map(int, match_time_str.split(':'))
-                                match_time = target_date.replace(hour=hour, minute=minute, second=0)
-                            except (ValueError, TypeError) as e:
-                                logger.warning(f"Failed to parse match time: {e}")
-                                # Default time if parsing fails
-                                match_time = target_date.replace(hour=15, minute=0, second=0)
-                            
-                            # Skip matches that have already started
-                            if match_time < now:
-                                logger.debug(f"Skipping past match with time {match_time}")
-                                continue
-                            
-                            # Get teams
-                            teams_container = event.select_one('div.event-description')
-                            if not teams_container:
-                                logger.warning("No teams container found")
-                                continue
-                            
-                            team_elems = teams_container.select('span.participants-pair-participant')
-                            
-                            if len(team_elems) < 2:
-                                logger.warning(f"Not enough team elements found: {len(team_elems)}")
-                                # Try alternative selectors
-                                team_elems = teams_container.select('div.event-description__name')
-                                if len(team_elems) < 2:
-                                    logger.warning("Alternative team selector also failed")
-                                    continue
-                            
-                            home_team = team_elems[0].text.strip()
-                            away_team = team_elems[1].text.strip()
-                            
-                            # Get odds
-                            odds_container = event.select('div.selections-selections')
-                            
-                            # Initialize odds object
-                            odds = {
-                                "home_win": 0,
-                                "draw": 0,
-                                "away_win": 0,
-                                "over_2_5": 0,
-                                "under_2_5": 0,
-                                "btts_yes": 0,
-                                "btts_no": 0
-                            }
-                            
-                            # Process 1X2 odds (match winner)
-                            if odds_container and len(odds_container) > 0:
-                                odds_elems = odds_container[0].select('div.selection')
-                                
-                                if len(odds_elems) >= 3:
-                                    # Parse 1X2 odds
-                                    try:
-                                        home_odds_elem = odds_elems[0].select_one('span.selection-price')
-                                        draw_odds_elem = odds_elems[1].select_one('span.selection-price')
-                                        away_odds_elem = odds_elems[2].select_one('span.selection-price')
-                                        
-                                        if home_odds_elem:
-                                            odds["home_win"] = float(home_odds_elem.text.strip().replace(',', '.'))
-                                        if draw_odds_elem:
-                                            odds["draw"] = float(draw_odds_elem.text.strip().replace(',', '.'))
-                                        if away_odds_elem:
-                                            odds["away_win"] = float(away_odds_elem.text.strip().replace(',', '.'))
-                                    except (ValueError, AttributeError) as e:
-                                        logger.warning(f"Error parsing 1X2 odds: {e}")
-                            
-                            # Create match object
-                            match_data = {
-                                "id": f"betano_{match_count}",
-                                "home_team": home_team,
-                                "away_team": away_team,
-                                "league": league_name,
-                                "match_time": match_time.isoformat(),
-                                "date": date_str,
-                                "venue": f"{home_team} Stadium",
-                                "odds": odds,
-                                "source": "betano"
-                            }
-                            
-                            match_count += 1
-                            
-                            logger.info(f"Found match: {home_team} vs {away_team} on {date_str} at {match_time.strftime('%H:%M')} with odds 1X2: {odds['home_win']}/{odds['draw']}/{odds['away_win']}")
-                            matches.append(match_data)
-                        except Exception as e:
-                            logger.warning(f"Error processing match: {e}")
-                            continue
+                # Handle different sources differently
+                if "betano.pt" in url:
+                    # Betano specific parsing logic
+                    found_matches = self._parse_betano_page(soup, url, now, match_count)
+                    if found_matches:
+                        matches.extend(found_matches)
+                        match_count += len(found_matches)
+                elif "zerozero.pt" in url:
+                    # ZeroZero parsing logic
+                    found_matches = self._parse_zerozero_page(soup, url, now, match_count)
+                    if found_matches:
+                        matches.extend(found_matches)
+                        match_count += len(found_matches)
+                elif "sofascore.com" in url:
+                    # SofaScore parsing logic
+                    found_matches = self._parse_sofascore_page(soup, url, now, match_count)
+                    if found_matches:
+                        matches.extend(found_matches)
+                        match_count += len(found_matches)
+                        
         except Exception as e:
-            logger.error(f"Error scraping Betano: {e}")
+            logger.error(f"Error scraping match data: {e}")
             logger.exception("Exception details:")
             
         logger.info(f"Scraping complete. Found {len(matches)} matches.")
+        return matches
+        
+    def _parse_betano_page(self, soup, url, now, current_count) -> List[Dict[str, Any]]:
+        """Parse Betano page HTML to extract match data."""
+        matches = []
+        match_count = current_count
+        
+        try:
+            # Find all league containers
+            league_containers = soup.select('div.events-list__grid')
+            
+            if not league_containers:
+                logger.warning(f"No league containers found on {url}")
+                # Try alternative selectors
+                league_containers = soup.select('div.events-list__container')
+                if not league_containers:
+                    logger.warning("Alternative selector also failed")
+                    return matches
+            
+            logger.info(f"Found {len(league_containers)} league containers on {url}")
+            
+            # Determine the date for this URL
+            if "jogos-de-hoje" in url:
+                target_date = now
+            elif "jogos-de-amanha" in url:
+                target_date = now + timedelta(days=1)
+            else:
+                # Default to today
+                target_date = now
+                
+            date_str = target_date.strftime("%Y-%m-%d")
+            
+            # Process each league container
+            for league_container in league_containers:
+                # Get the league name
+                league_header = league_container.find_previous('div', class_='events-list__title')
+                league_name = "Unknown League"
+                if league_header:
+                    league_name_elem = league_header.select_one('h2.events-list__title__label')
+                    if league_name_elem:
+                        league_name = league_name_elem.text.strip()
+                
+                # Find all events (matches) in this league
+                events = league_container.select('div.event')
+                
+                if not events:
+                    logger.warning(f"No events found in league container for {league_name}")
+                    continue
+                
+                logger.info(f"Found {len(events)} events in {league_name}")
+                
+                # Process each event
+                for event in events:
+                    try:
+                        # Get match time
+                        time_elem = event.select_one('div.starting-time')
+                        match_time_str = time_elem.text.strip() if time_elem else "00:00"
+                        logger.debug(f"Match time string: {match_time_str}")
+                        
+                        # Parse hour and minute
+                        try:
+                            hour, minute = map(int, match_time_str.split(':'))
+                            match_time = target_date.replace(hour=hour, minute=minute, second=0)
+                        except (ValueError, TypeError) as e:
+                            logger.warning(f"Failed to parse match time: {e}")
+                            # Default time if parsing fails
+                            match_time = target_date.replace(hour=15, minute=0, second=0)
+                        
+                        # Skip matches that have already started
+                        if match_time < now:
+                            logger.debug(f"Skipping past match with time {match_time}")
+                            continue
+                        
+                        # Get teams
+                        teams_container = event.select_one('div.event-description')
+                        if not teams_container:
+                            logger.warning("No teams container found")
+                            continue
+                        
+                        team_elems = teams_container.select('span.participants-pair-participant')
+                        
+                        if len(team_elems) < 2:
+                            logger.warning(f"Not enough team elements found: {len(team_elems)}")
+                            # Try alternative selectors
+                            team_elems = teams_container.select('div.event-description__name')
+                            if len(team_elems) < 2:
+                                logger.warning("Alternative team selector also failed")
+                                continue
+                        
+                        home_team = team_elems[0].text.strip()
+                        away_team = team_elems[1].text.strip()
+                        
+                        # Get odds
+                        odds_container = event.select('div.selections-selections')
+                        
+                        # Initialize odds object
+                        odds = {
+                            "home_win": 0,
+                            "draw": 0,
+                            "away_win": 0,
+                            "over_2_5": 0,
+                            "under_2_5": 0,
+                            "btts_yes": 0,
+                            "btts_no": 0
+                        }
+                        
+                        # Process 1X2 odds (match winner)
+                        if odds_container and len(odds_container) > 0:
+                            odds_elems = odds_container[0].select('div.selection')
+                            
+                            if len(odds_elems) >= 3:
+                                # Parse 1X2 odds
+                                try:
+                                    home_odds_elem = odds_elems[0].select_one('span.selection-price')
+                                    draw_odds_elem = odds_elems[1].select_one('span.selection-price')
+                                    away_odds_elem = odds_elems[2].select_one('span.selection-price')
+                                    
+                                    if home_odds_elem:
+                                        odds["home_win"] = float(home_odds_elem.text.strip().replace(',', '.'))
+                                    if draw_odds_elem:
+                                        odds["draw"] = float(draw_odds_elem.text.strip().replace(',', '.'))
+                                    if away_odds_elem:
+                                        odds["away_win"] = float(away_odds_elem.text.strip().replace(',', '.'))
+                                except (ValueError, AttributeError) as e:
+                                    logger.warning(f"Error parsing 1X2 odds: {e}")
+                        
+                        # Create match object
+                        match_data = {
+                            "id": f"betano_{match_count}",
+                            "home_team": home_team,
+                            "away_team": away_team,
+                            "league": league_name,
+                            "match_time": match_time.isoformat(),
+                            "date": date_str,
+                            "venue": f"{home_team} Stadium",
+                            "odds": odds,
+                            "source": "betano"
+                        }
+                        
+                        match_count += 1
+                        
+                        logger.info(f"Found match: {home_team} vs {away_team} on {date_str} at {match_time.strftime('%H:%M')} with odds 1X2: {odds['home_win']}/{odds['draw']}/{odds['away_win']}")
+                        matches.append(match_data)
+                    except Exception as e:
+                        logger.warning(f"Error processing match: {e}")
+                        continue
+        except Exception as e:
+            logger.error(f"Error parsing Betano page: {e}")
+            
+        return matches
+        
+    def _parse_zerozero_page(self, soup, url, now, current_count) -> List[Dict[str, Any]]:
+        """Parse ZeroZero page HTML to extract match data."""
+        matches = []
+        match_count = current_count
+        
+        try:
+            # ZeroZero.pt specific parsing logic
+            match_rows = soup.select('tr.parent')
+            
+            logger.info(f"Found {len(match_rows)} match rows on ZeroZero")
+            
+            for row in match_rows:
+                try:
+                    # Get date from the previous row with class "data"
+                    date_row = row.find_previous('tr', class_='data')
+                    date_str = now.strftime("%Y-%m-%d")  # Default to today
+                    if date_row:
+                        date_text = date_row.text.strip()
+                        try:
+                            # Parse the date in format DD/MM/YYYY
+                            day, month, year = map(int, re.findall(r'(\d+)/(\d+)/(\d+)', date_text)[0])
+                            date_str = f"{year}-{month:02d}-{day:02d}"
+                        except (ValueError, IndexError) as e:
+                            logger.warning(f"Failed to parse date: {e}")
+                    
+                    # Get match time
+                    time_elem = row.select_one('td.hora')
+                    match_time_str = time_elem.text.strip() if time_elem else "00:00"
+                    
+                    # Parse hour and minute
+                    try:
+                        hour, minute = map(int, match_time_str.split(':'))
+                        match_date = datetime.strptime(date_str, "%Y-%m-%d")
+                        match_time = match_date.replace(hour=hour, minute=minute, second=0)
+                    except (ValueError, TypeError) as e:
+                        logger.warning(f"Failed to parse match time: {e}")
+                        # Default time if parsing fails
+                        match_date = datetime.strptime(date_str, "%Y-%m-%d")
+                        match_time = match_date.replace(hour=15, minute=0, second=0)
+                    
+                    # Skip matches that have already started
+                    if match_time < now:
+                        continue
+                    
+                    # Get teams
+                    home_elem = row.select_one('td.text.left a[itemprop="homeTeam"]')
+                    away_elem = row.select_one('td.text.left a[itemprop="awayTeam"]')
+                    
+                    if not home_elem or not away_elem:
+                        continue
+                    
+                    home_team = home_elem.text.strip()
+                    away_team = away_elem.text.strip()
+                    
+                    # Get league/competition
+                    comp_elem = row.select_one('td.competition a')
+                    league_name = comp_elem.text.strip() if comp_elem else "Unknown League"
+                    
+                    # ZeroZero doesn't have odds, so create placeholder odds
+                    odds = {
+                        "home_win": 0,
+                        "draw": 0,
+                        "away_win": 0,
+                        "over_2_5": 0,
+                        "under_2_5": 0,
+                        "btts_yes": 0,
+                        "btts_no": 0
+                    }
+                    
+                    # Create match object
+                    match_data = {
+                        "id": f"zerozero_{match_count}",
+                        "home_team": home_team,
+                        "away_team": away_team,
+                        "league": league_name,
+                        "match_time": match_time.isoformat(),
+                        "date": date_str,
+                        "venue": f"{home_team} Stadium",
+                        "odds": odds,
+                        "source": "zerozero"
+                    }
+                    
+                    match_count += 1
+                    logger.info(f"Found match on ZeroZero: {home_team} vs {away_team} on {date_str} at {match_time.strftime('%H:%M')}")
+                    matches.append(match_data)
+                    
+                except Exception as e:
+                    logger.warning(f"Error processing ZeroZero match: {e}")
+                    continue
+        
+        except Exception as e:
+            logger.error(f"Error parsing ZeroZero page: {e}")
+        
+        return matches
+        
+    def _parse_sofascore_page(self, soup, url, now, current_count) -> List[Dict[str, Any]]:
+        """Parse SofaScore page HTML to extract match data."""
+        matches = []
+        match_count = current_count
+        
+        # SofaScore requires JavaScript to load content, so the HTML scraping won't work directly
+        # We'd need to use a headless browser like Selenium for SofaScore
+        logger.warning("SofaScore scraping requires a headless browser, which is not implemented")
+        
         return matches
     
     def _fetch_football_data_matches(self) -> List[Dict[str, Any]]:
