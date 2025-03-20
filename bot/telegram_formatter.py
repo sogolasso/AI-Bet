@@ -78,9 +78,13 @@ def format_daily_tips(tips: List[Dict[str, Any]]) -> str:
         if match_time:
             formatted_msg += f" 🕒 {match_time}"
         formatted_msg += "\n"
-        formatted_msg += f"💰 *Bet*: {tip.get('tip', '')}\n"
+        formatted_msg += f"💰 *Bet*: {tip.get('market', '')} - {tip.get('selection', '')}\n"
         formatted_msg += f"📊 Odds: {tip.get('odds', '-')} ({tip.get('bookmaker', '')})\n"
-        formatted_msg += f"💵 Stake: {tip.get('stake', 0):.2f} units\n\n"
+        
+        # Add stake information
+        stake_percentage = tip.get('stake_percentage', '1.0%')
+        stake_amount = tip.get('stake_amount', 0)
+        formatted_msg += f"💵 *Stake*: {stake_amount:.2f} units ({stake_percentage})\n\n"
     
     # Footer
     formatted_msg += "💡 _Recommendations are based on value betting analysis._\n"

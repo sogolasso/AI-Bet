@@ -576,6 +576,46 @@ class BettingAdvisor:
                 except (ValueError, TypeError):
                     match_datetime = f"{match_date} Unknown time"
                 
+                # Calculate stake based on confidence and odds
+                # Use the Kelly Criterion as a starting point
+                # Kelly formula: f = (p * b - q) / b where:
+                # - f is the fraction of the bankroll to wager
+                # - p is the probability of winning
+                # - q is the probability of losing (1 - p)
+                # - b is the odds - 1 (net odds)
+                
+                # Calculate implied probability from odds
+                implied_prob = 1 / selection_odds if selection_odds > 0 else 0.5
+                
+                # Estimate our probability based on confidence
+                if confidence == "High":
+                    our_prob = implied_prob * 1.15  # 15% edge for high confidence
+                    kelly_fraction = 0.5  # Use half Kelly for high confidence
+                elif confidence == "Medium":
+                    our_prob = implied_prob * 1.1   # 10% edge for medium confidence
+                    kelly_fraction = 0.33  # Use one-third Kelly for medium confidence
+                else:  # Low confidence
+                    our_prob = implied_prob * 1.05  # 5% edge for low confidence
+                    kelly_fraction = 0.25  # Use quarter Kelly for low confidence
+                
+                # Cap our probability at 90% to avoid overconfidence
+                our_prob = min(our_prob, 0.9)
+                
+                # Calculate Kelly stake
+                net_odds = selection_odds - 1
+                kelly_stake = (our_prob * net_odds - (1 - our_prob)) / net_odds
+                
+                # Apply fraction and ensure it's not negative
+                stake_percentage = max(0, kelly_stake * kelly_fraction)
+                
+                # Apply limits based on bankroll
+                max_stake_pct = 0.05  # 5% of bankroll
+                min_stake_pct = 0.01  # 1% of bankroll
+                stake_percentage = min(max_stake_pct, max(min_stake_pct, stake_percentage))
+                
+                # Calculate actual stake amount based on current bankroll
+                stake_amount = round(self.current_bankroll * stake_percentage, 2)
+                
                 tip = {
                     "match": f"{match['home_team']} vs {match['away_team']}",
                     "competition": match.get("league", "Unknown League"),
@@ -585,6 +625,8 @@ class BettingAdvisor:
                     "odds": selection_odds if selection_odds > 0 else round(random.uniform(1.5, 3.5), 2),
                     "bookmaker": bookmaker,
                     "confidence": confidence,
+                    "stake_percentage": f"{stake_percentage*100:.1f}%",
+                    "stake_amount": stake_amount,
                     "reasoning": self._generate_tip_reasoning(match, market["name"], selection)
                 }
                 
@@ -826,8 +868,7 @@ class BettingAdvisor:
                 odds_value = odds.get('away_win', 0)
                 reasoning = f"{away_team} has been performing well ({away_form_text}), "
                 reasoning += f"with a {int(away_win_prob * 100)}% probability of winning according to our model. "
-                if odds_value > 0:
-                    reasoning += f"The Betano odds of {odds_value} represent value compared to our calculated fair odds. "
+                reasoning += f"The Betano odds of {odds_value} represent value compared to our calculated fair odds. "
                 reasoning += f"{home_team}'s recent form ({home_form_text}) makes them vulnerable at home."
             else:  # Draw
                 odds_value = odds.get('draw', 0)
