@@ -90,40 +90,62 @@ class MatchCollector:
         # List to store all matches from different sources
         all_matches = []
         
-        # Try to scrape Betano odds from MelhorOdd.pt (our specialized scraper)
+        # First try: Scrape directly from Betano.pt (highest priority)
+        logger.info("Attempting to scrape matches directly from Betano.pt...")
+        try:
+            from data.collectors.betano_scraper import scrape_betano_matches
+            betano_matches = scrape_betano_matches(days_ahead=self.days_ahead, headless=True)
+            if betano_matches and len(betano_matches) > 0:
+                logger.info(f"Successfully scraped {len(betano_matches)} matches directly from Betano.pt")
+                all_matches.extend(betano_matches)
+                logger.info(f"Using {len(all_matches)} football matches from direct Betano.pt scraper")
+                self.cached_matches = all_matches
+                self.cached_time = datetime.now()
+                return all_matches
+            else:
+                logger.warning("Direct Betano scraper returned no matches, falling back to alternative methods")
+        except Exception as e:
+            logger.error(f"Error scraping directly from Betano.pt: {e}")
+            logger.exception("Exception details:")
+        
+        # Second try: Betano odds from MelhorOdd.pt
         logger.info("Attempting to scrape Betano odds from MelhorOdd.pt...")
         try:
             from data.collectors.betano_melhorodd_scraper import scrape_betano_melhorodd_matches
             betano_melhorodd_matches = scrape_betano_melhorodd_matches(days_ahead=self.days_ahead)
-            if betano_melhorodd_matches:
+            if betano_melhorodd_matches and len(betano_melhorodd_matches) > 0:
                 logger.info(f"Successfully scraped {len(betano_melhorodd_matches)} matches with Betano odds from MelhorOdd.pt")
                 all_matches.extend(betano_melhorodd_matches)
                 logger.info(f"Using {len(all_matches)} football matches from MelhorOdd.pt")
                 self.cached_matches = all_matches
                 self.cached_time = datetime.now()
                 return all_matches
+            else:
+                logger.warning("MelhorOdd Betano scraper returned no matches, trying standard MelhorOdd scraper")
         except Exception as e:
             logger.error(f"Error scraping Betano odds from MelhorOdd.pt: {e}")
             logger.exception("Exception details:")
         
-        # As a fallback, try the standard MelhorOdd scraper
+        # Third try: standard MelhorOdd scraper
         logger.info("Attempting to scrape matches from MelhorOdd.pt fallback method...")
         try:
             from data.collectors.melhorodd_scraper import scrape_melhorodd_matches
             melhorodd_matches = scrape_melhorodd_matches(days_ahead=self.days_ahead)
-            if melhorodd_matches:
+            if melhorodd_matches and len(melhorodd_matches) > 0:
                 logger.info(f"Successfully scraped {len(melhorodd_matches)} matches from MelhorOdd.pt")
                 all_matches.extend(melhorodd_matches)
                 logger.info(f"Using {len(all_matches)} football matches from MelhorOdd.pt (fallback method)")
                 self.cached_matches = all_matches
                 self.cached_time = datetime.now()
                 return all_matches
+            else:
+                logger.warning("Standard MelhorOdd scraper returned no matches")
         except Exception as e:
             logger.error(f"Error scraping from MelhorOdd.pt fallback method: {e}")
             logger.exception("Exception details:")
         
-        # If we get here, both MelhorOdd scrapers failed
-        logger.warning("All MelhorOdd scrapers failed to get matches")
+        # If we get here, all scrapers failed
+        logger.warning("All scrapers failed to get matches")
         
         # Only use mock data in development mode
         if self.is_development:
