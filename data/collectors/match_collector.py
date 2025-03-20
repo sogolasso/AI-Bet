@@ -98,185 +98,126 @@ class MatchCollector:
             if betano_melhorodd_matches:
                 logger.info(f"Successfully scraped {len(betano_melhorodd_matches)} matches with Betano odds from MelhorOdd.pt")
                 all_matches.extend(betano_melhorodd_matches)
-                # If we got a good number of matches with Betano odds, no need to try other sources
-                if len(betano_melhorodd_matches) >= 15:
-                    logger.info(f"Found {len(betano_melhorodd_matches)} matches with Betano odds, skipping other sources")
-                    self.cached_matches = all_matches
-                    self.cached_time = datetime.now()
-                    return all_matches
+                logger.info(f"Using {len(all_matches)} football matches from MelhorOdd.pt")
+                self.cached_matches = all_matches
+                self.cached_time = datetime.now()
+                return all_matches
         except Exception as e:
             logger.error(f"Error scraping Betano odds from MelhorOdd.pt: {e}")
             logger.exception("Exception details:")
         
-        # If our specialized scraper didn't find enough matches, try regular scrapers
-        
-        # Try to scrape from MelhorOdd.pt
-        if len(all_matches) < 15:
-            logger.info("Attempting to scrape matches from MelhorOdd.pt...")
-            try:
-                from data.collectors.melhorodd_scraper import scrape_melhorodd_matches
-                melhorodd_matches = scrape_melhorodd_matches(days_ahead=self.days_ahead)
-                if melhorodd_matches:
-                    logger.info(f"Successfully scraped {len(melhorodd_matches)} matches from MelhorOdd.pt")
-                    
-                    # Only add unique matches that aren't already in all_matches
-                    unique_matches = []
-                    existing_match_keys = {f"{m['home_team']}|{m['away_team']}|{m['date']}" for m in all_matches}
-                    
-                    for match in melhorodd_matches:
-                        match_key = f"{match['home_team']}|{match['away_team']}|{match['date']}"
-                        if match_key not in existing_match_keys:
-                            unique_matches.append(match)
-                    
-                    if unique_matches:
-                        logger.info(f"Adding {len(unique_matches)} unique matches from MelhorOdd.pt")
-                        all_matches.extend(unique_matches)
-            except Exception as e:
-                logger.error(f"Error scraping from MelhorOdd.pt: {e}")
-                logger.exception("Exception details:")
-        
-        # Always try Betano direct scraper as well if we don't have enough matches
-        if len(all_matches) < 15:
-            logger.info("Attempting to scrape matches from Betano with headless browser...")
-            try:
-                from data.collectors.betano_scraper import scrape_betano_matches
-                betano_matches = scrape_betano_matches(days_ahead=self.days_ahead)
-                if betano_matches:
-                    logger.info(f"Successfully scraped {len(betano_matches)} matches from Betano with headless browser")
-                    
-                    # Only add unique matches that aren't already in all_matches
-                    unique_betano_matches = []
-                    existing_match_keys = {f"{m['home_team']}|{m['away_team']}|{m['date']}" for m in all_matches}
-                    
-                    for match in betano_matches:
-                        match_key = f"{match['home_team']}|{match['away_team']}|{match['date']}"
-                        if match_key not in existing_match_keys:
-                            unique_betano_matches.append(match)
-                    
-                    if unique_betano_matches:
-                        logger.info(f"Adding {len(unique_betano_matches)} unique matches from Betano")
-                        all_matches.extend(unique_betano_matches)
-            except Exception as e:
-                logger.error(f"Error scraping from Betano with headless browser: {e}")
-                logger.exception("Exception details:")
-        
-        # If any scraper provided matches, use those
-        if all_matches:
-            logger.info(f"Using {len(all_matches)} matches from all scrapers")
-            self.cached_matches = all_matches
-            self.cached_time = datetime.now()
-            return all_matches
-            
-        # If all scrapers failed, try Football-Data.org API
+        # As a fallback, try the standard MelhorOdd scraper
+        logger.info("Attempting to scrape matches from MelhorOdd.pt fallback method...")
         try:
-            logger.info("All scrapers failed, trying Football-Data.org API...")
-            football_data_matches = await self._fetch_football_data_matches()
-            if football_data_matches:
-                logger.info(f"Successfully fetched {len(football_data_matches)} matches from Football-Data.org")
-                all_matches.extend(football_data_matches)
+            from data.collectors.melhorodd_scraper import scrape_melhorodd_matches
+            melhorodd_matches = scrape_melhorodd_matches(days_ahead=self.days_ahead)
+            if melhorodd_matches:
+                logger.info(f"Successfully scraped {len(melhorodd_matches)} matches from MelhorOdd.pt")
+                all_matches.extend(melhorodd_matches)
+                logger.info(f"Using {len(all_matches)} football matches from MelhorOdd.pt (fallback method)")
+                self.cached_matches = all_matches
+                self.cached_time = datetime.now()
+                return all_matches
         except Exception as e:
-            logger.error(f"Error fetching from Football-Data.org: {e}")
+            logger.error(f"Error scraping from MelhorOdd.pt fallback method: {e}")
             logger.exception("Exception details:")
         
-        # If we have matches from any source, use those
-        if all_matches:
-            logger.info(f"Using {len(all_matches)} matches from available sources")
-            self.cached_matches = all_matches
-            self.cached_time = datetime.now()
-            return all_matches
-            
-        # If we're in development mode and all real sources failed, use mock data as last resort
-        if os.environ.get("DEVELOPMENT_MODE", "false").lower() == "true":
-            logger.warning("All real data sources failed, falling back to mock data (DEVELOPMENT_MODE=true)")
-            mock_matches = self._generate_mock_upcoming_matches()
+        # If we get here, both MelhorOdd scrapers failed
+        logger.warning("All MelhorOdd scrapers failed to get matches")
+        
+        # Only use mock data in development mode
+        if self.is_development:
+            logger.warning("Using mock match data since all scrapers failed and development mode is enabled")
+            mock_matches = self._generate_mock_matches()
             self.cached_matches = mock_matches
-            self.cached_time = datetime.now()
+            self.cached_time = datetime.now() - timedelta(seconds=self.cache_duration/2)  # Set to half-expired
             return mock_matches
         else:
-            # In production, return an empty list if all sources failed
-            logger.error("All data sources failed and DEVELOPMENT_MODE=false, returning empty list")
+            logger.error("Failed to get any matches and not in development mode. Returning empty list.")
             return []
     
-    def _generate_mock_upcoming_matches(self) -> List[Dict[str, Any]]:
+    def _generate_mock_matches(self) -> List[Dict[str, Any]]:
         """Generate mock upcoming matches for DEVELOPMENT ONLY."""
         logger.warning("DEVELOPMENT MODE ONLY: Using MOCK match data - NOT FOR PRODUCTION!")
         
-        teams = [
-            ("Liverpool", "Premier League"),
-            ("Manchester City", "Premier League"),
-            ("Arsenal", "Premier League"),
-            ("Chelsea", "Premier League"),
-            ("Barcelona", "La Liga"),
-            ("Real Madrid", "La Liga"),
-            ("Bayern Munich", "Bundesliga"),
-            ("Borussia Dortmund", "Bundesliga"),
-            ("PSG", "Ligue 1"),
-            ("Marseille", "Ligue 1"),
-            ("Inter", "Serie A"),
-            ("Juventus", "Serie A")
-        ]
+        # Mock teams
+        teams = {
+            "England": ["Manchester City", "Liverpool", "Chelsea", "Arsenal", "Manchester United", "Tottenham", "Newcastle", "West Ham", "Leicester", "Everton"],
+            "Spain": ["Real Madrid", "Barcelona", "Atletico Madrid", "Sevilla", "Valencia", "Real Betis", "Villarreal", "Athletic Bilbao", "Real Sociedad", "Celta Vigo"],
+            "Italy": ["AC Milan", "Inter Milan", "Juventus", "Napoli", "Roma", "Lazio", "Atalanta", "Fiorentina", "Torino", "Bologna"],
+            "Germany": ["Bayern Munich", "Borussia Dortmund", "RB Leipzig", "Bayer Leverkusen", "Eintracht Frankfurt", "Wolfsburg", "Borussia Monchengladbach", "Hoffenheim", "Freiburg", "Union Berlin"],
+            "France": ["PSG", "Marseille", "Lyon", "Monaco", "Lille", "Rennes", "Nice", "Lens", "Strasbourg", "Nantes"],
+            "Portugal": ["Sporting CP", "FC Porto", "Benfica", "Braga", "Vitória Guimarães", "Famalicão", "Rio Ave", "Portimonense", "Boavista", "Santa Clara"]
+        }
         
-        matches = []
-        now = datetime.now()
+        # Mock competitions
+        competitions = {
+            "England": "Premier League",
+            "Spain": "La Liga",
+            "Italy": "Serie A",
+            "Germany": "Bundesliga",
+            "France": "Ligue 1",
+            "Portugal": "Primeira Liga"
+        }
         
-        # Debug print to show the current date/time
-        logger.info(f"MOCK DATA - Current datetime: {now.strftime('%Y-%m-%d %H:%M:%S')}")
+        mock_matches = []
         
-        # Start from today (day=0) instead of tomorrow (day=1)
-        for day in range(0, self.days_ahead):
-            match_date = now + timedelta(days=day)
-            # Debug print to show what date we're generating matches for
-            logger.info(f"MOCK DATA - Generating mock matches for: {match_date.strftime('%Y-%m-%d')}")
+        # Generate 20 random matches over the next week
+        for i in range(20):
+            # Pick a random country
+            country = random.choice(list(teams.keys()))
             
-            # Generate 5 matches per day
-            for i in range(5):
-                home_idx = random.randint(0, len(teams)-1)
-                away_idx = random.randint(0, len(teams)-1)
-                
-                # Make sure home and away teams are different
-                while home_idx == away_idx:
-                    away_idx = random.randint(0, len(teams)-1)
-                
-                home_team, league = teams[home_idx]
-                away_team, _ = teams[away_idx]
-                
-                # Generate match time - ensure it's future time if it's today
-                hour = 15 + (i % 4)
-                minute = 0
-                
-                # If it's today and the hour is in the past, move to a future time
-                if day == 0 and hour < now.hour:
-                    hour = now.hour + 1
-                    minute = 30  # Set to 30 minutes from now if in the current hour
-                
-                match_time = match_date.replace(hour=hour, minute=minute, second=0)
-                
-                match = {
-                    "id": f"mock_{day}_{i+1}",
-                    "home_team": home_team,
-                    "away_team": away_team,
-                    "league": league,
-                    "match_time": match_time.isoformat(),
-                    # Add date field for easier filtering
-                    "date": match_date.strftime("%Y-%m-%d"),
-                    "venue": f"{home_team} Stadium",
-                    "odds": {
-                        "home_win": round(random.uniform(1.5, 3.0), 2),
-                        "draw": round(random.uniform(2.8, 4.0), 2),
-                        "away_win": round(random.uniform(2.0, 4.5), 2),
-                        "over_2_5": round(random.uniform(1.7, 2.2), 2),
-                        "under_2_5": round(random.uniform(1.7, 2.2), 2),
-                        "btts_yes": round(random.uniform(1.7, 2.2), 2),
-                        "btts_no": round(random.uniform(1.7, 2.2), 2)
-                    }
+            # Pick two different teams from that country
+            home_away = random.sample(teams[country], 2)
+            home_team = home_away[0]
+            away_team = home_away[1]
+            
+            # Generate a random date in the next week
+            days_ahead = random.randint(0, self.days_ahead)
+            hours_ahead = random.randint(1, 24)
+            match_time = datetime.now() + timedelta(days=days_ahead, hours=hours_ahead)
+            
+            # Generate some random odds
+            home_odds = round(random.uniform(1.5, 5.0), 2)
+            draw_odds = round(random.uniform(2.0, 4.5), 2)
+            away_odds = round(random.uniform(1.5, 5.0), 2)
+            
+            # Generate over/under odds
+            over_odds = round(random.uniform(1.5, 2.5), 2)
+            under_odds = round(random.uniform(1.5, 2.5), 2)
+            
+            # Generate BTTS odds
+            btts_yes = round(random.uniform(1.5, 2.5), 2)
+            btts_no = round(random.uniform(1.5, 2.5), 2)
+            
+            match = {
+                "id": f"mock_{i}",
+                "competition": competitions[country],
+                "country": country,
+                "home_team": home_team,
+                "away_team": away_team,
+                "league": competitions[country],
+                "date": match_time.strftime("%Y-%m-%d"),
+                "match_time": match_time.isoformat(),
+                "source": "mock_data",
+                "url": "https://example.com/mock",
+                "sport": "Football",
+                "odds": {
+                    "home_win": home_odds,
+                    "draw": draw_odds,
+                    "away_win": away_odds,
+                    "over_2_5": over_odds,
+                    "under_2_5": under_odds,
+                    "btts_yes": btts_yes,
+                    "btts_no": btts_no,
+                    "bookmaker": "Mock Bookmaker"
                 }
-                
-                # Debug print for each match
-                logger.info(f"MOCK DATA - Added mock match: {home_team} vs {away_team} on {match_date.strftime('%Y-%m-%d')} at {hour}:{minute:02d}")
-                
-                matches.append(match)
+            }
+            
+            mock_matches.append(match)
         
-        return matches
+        logger.warning(f"Generated {len(mock_matches)} MOCK matches - FOR DEVELOPMENT ONLY!")
+        return mock_matches
     
     def _scrape_betano_matches(self) -> List[Dict[str, Any]]:
         """Scrape upcoming football matches from Betano Portugal with odds."""
